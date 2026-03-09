@@ -1,11 +1,22 @@
 const extensionApi = globalThis.browser || globalThis.chrome;
 const usesPromiseMessagingApi =
   typeof globalThis.browser !== "undefined" && extensionApi === globalThis.browser;
-const MANAGED_SITE_IDS = new Set(["youtube", "netflix", "max"]);
+const MANAGED_SITE_IDS = new Set([
+  "youtube",
+  "netflix",
+  "max",
+  "prime-video",
+  "disney-plus",
+  "udemy",
+  "twitch"
+]);
 
 const enabledToggle = document.getElementById("enabled-toggle");
 const sourceLanguage = document.getElementById("source-language");
 const targetLanguage = document.getElementById("target-language");
+const displayMode = document.getElementById("display-mode");
+const subtitleHistoryLimit = document.getElementById("subtitle-history-limit");
+const syncWordPool = document.getElementById("sync-word-pool");
 const currentSite = document.getElementById("current-site");
 const siteMode = document.getElementById("site-mode");
 const statusChip = document.getElementById("status-chip");
@@ -23,6 +34,8 @@ const siteProfileCopy = document.getElementById("site-profile-copy");
 const profileHoverDelay = document.getElementById("profile-hover-delay");
 const profilePlacement = document.getElementById("profile-placement");
 const profileSize = document.getElementById("profile-size");
+const profileDisplayMode = document.getElementById("profile-display-mode");
+const profileOcrEnabled = document.getElementById("profile-ocr-enabled");
 const reviewCount = document.getElementById("review-count");
 const reviewPanel = document.getElementById("review-panel");
 const reviewEmpty = document.getElementById("review-empty");
@@ -40,25 +53,42 @@ const reviewEasyButton = document.getElementById("review-easy");
 const exportAnkiButton = document.getElementById("export-anki");
 const exportCsvButton = document.getElementById("export-csv");
 const exportStatus = document.getElementById("export-status");
+const analyticsCopy = document.getElementById("analytics-copy");
+const analyticsTotal = document.getElementById("analytics-total");
+const analyticsKnown = document.getElementById("analytics-known");
+const analyticsLearning = document.getElementById("analytics-learning");
+const analyticsDue = document.getElementById("analytics-due");
+const analyticsSummary = document.getElementById("analytics-summary");
+const subtitleHistoryList = document.getElementById("subtitle-history-list");
+const subtitleHistoryCopy = document.getElementById("subtitle-history-copy");
 
 let currentTabId = null;
 let currentPageContext = null;
 let currentSettings = {
   sourceLang: "auto",
   targetLang: "tr",
+  displayMode: "auto",
+  subtitleHistoryLimit: 10,
+  syncWordPool: true,
   siteProfiles: {}
 };
 let unknownEntries = [];
+let subtitleHistoryEntries = [];
 let reviewCursor = 0;
 let reviewRevealed = false;
 
 enabledToggle.addEventListener("change", handleToggleChange);
 sourceLanguage.addEventListener("change", saveLanguageSettings);
 targetLanguage.addEventListener("change", saveLanguageSettings);
+displayMode.addEventListener("change", saveLanguageSettings);
+subtitleHistoryLimit.addEventListener("change", saveLanguageSettings);
+syncWordPool.addEventListener("change", saveLanguageSettings);
 clearWordsButton.addEventListener("click", clearUnknownWords);
 profileHoverDelay.addEventListener("change", saveSiteProfileSettings);
 profilePlacement.addEventListener("change", saveSiteProfileSettings);
 profileSize.addEventListener("change", saveSiteProfileSettings);
+profileDisplayMode.addEventListener("change", saveSiteProfileSettings);
+profileOcrEnabled.addEventListener("change", saveSiteProfileSettings);
 reviewRevealButton.addEventListener("click", () => {
   reviewRevealed = true;
   renderReviewPanel();
@@ -115,11 +145,15 @@ async function init() {
   enabledToggle.checked = Boolean(stateResponse.state.enabled);
   sourceLanguage.value = currentSettings.sourceLang;
   targetLanguage.value = currentSettings.targetLang;
+  displayMode.value = currentSettings.displayMode || "auto";
+  subtitleHistoryLimit.value = String(currentSettings.subtitleHistoryLimit || 10);
+  syncWordPool.checked = Boolean(currentSettings.syncWordPool);
 
   renderPageContext(currentPageContext);
   renderEnabledState(enabledToggle.checked);
   renderSiteProfileCard();
   await loadUnknownWords();
+  await loadSubtitleHistory();
 }
 
 async function handleToggleChange() {
@@ -143,16 +177,22 @@ async function saveLanguageSettings() {
     type: "UPDATE_SETTINGS",
     settings: {
       sourceLang: sourceLanguage.value,
-      targetLang: targetLanguage.value
+      targetLang: targetLanguage.value,
+      displayMode: displayMode.value,
+      subtitleHistoryLimit: Number(subtitleHistoryLimit.value),
+      syncWordPool: syncWordPool.checked
     },
     tabId: currentTabId
   });
 
   currentSettings = normalizeSettings(response.settings);
+  displayMode.value = currentSettings.displayMode || "auto";
+  subtitleHistoryLimit.value = String(currentSettings.subtitleHistoryLimit || 10);
+  syncWordPool.checked = Boolean(currentSettings.syncWordPool);
 
   const sourceLabel = getSelectedLabel(sourceLanguage);
   const targetLabel = getSelectedLabel(targetLanguage);
-  writeTransientStatus(`Dil ayari kaydedildi: ${sourceLabel} -> ${targetLabel}`);
+  writeTransientStatus(`Ayarlar kaydedildi: ${sourceLabel} -> ${targetLabel}`);
 }
 
 async function saveSiteProfileSettings() {
@@ -168,7 +208,9 @@ async function saveSiteProfileSettings() {
         [siteId]: {
           hoverDelayMs: Number(profileHoverDelay.value),
           tooltipPlacement: profilePlacement.value,
-          tooltipSize: profileSize.value
+          tooltipSize: profileSize.value,
+          displayMode: profileDisplayMode.value,
+          ocrEnabled: profileOcrEnabled.checked
         }
       }
     },
@@ -189,6 +231,7 @@ async function loadUnknownWords() {
   renderUnknownWords(unknownEntries);
   renderReviewPanel();
   renderExportState();
+  renderAnalytics();
 }
 
 async function clearUnknownWords() {
@@ -202,6 +245,23 @@ async function clearUnknownWords() {
   renderUnknownWords(unknownEntries);
   renderReviewPanel();
   renderExportState();
+  renderAnalytics();
+}
+
+async function loadSubtitleHistory() {
+  if (!currentTabId) {
+    subtitleHistoryEntries = [];
+    renderSubtitleHistory();
+    return;
+  }
+
+  const response = await sendRuntimeMessage({
+    type: "GET_SUBTITLE_HISTORY",
+    tabId: currentTabId
+  }).catch(() => ({ history: [] }));
+
+  subtitleHistoryEntries = Array.isArray(response.history) ? response.history : [];
+  renderSubtitleHistory();
 }
 
 function renderUnknownWords(entries) {
@@ -245,6 +305,58 @@ function renderUnknownWords(entries) {
     .join("");
 }
 
+function renderSubtitleHistory() {
+  if (!subtitleHistoryEntries.length) {
+    subtitleHistoryList.classList.add("empty-state");
+    subtitleHistoryList.innerHTML = "Bu sekmede son altyazi satirlari burada gorunecek.";
+    subtitleHistoryCopy.textContent = "Aktif sekmedeki son altyazi satirlari.";
+    return;
+  }
+
+  subtitleHistoryList.classList.remove("empty-state");
+  subtitleHistoryCopy.textContent = `${subtitleHistoryEntries.length} satir yakalandi.`;
+  subtitleHistoryList.innerHTML = subtitleHistoryEntries
+    .map(
+      (entry) => `
+        <article class="unknown-word-item">
+          <div class="item-head">
+            <div>
+              <h3>${escapeHtml(entry.text || "")}</h3>
+              <p class="item-target">${escapeHtml(entry.source || "Altyazi")}</p>
+            </div>
+          </div>
+          <time class="item-time" datetime="${escapeHtml(entry.savedAt || "")}">${formatSavedTime(entry.savedAt)}</time>
+        </article>
+      `
+    )
+    .join("");
+}
+
+function renderAnalytics() {
+  const total = unknownEntries.length;
+  const known = unknownEntries.filter((entry) => getReviewState(entry) === "known").length;
+  const learning = unknownEntries.filter((entry) => getReviewState(entry) === "learning").length;
+  const dueNow = buildReviewQueue(unknownEntries).filter((entry) => getReviewDueTimestamp(entry) <= Date.now()).length;
+  const uniqueSites = new Set(unknownEntries.map((entry) => entry.hostname).filter(Boolean));
+  const syncedLabel = currentSettings.syncWordPool ? "Sync acik" : "Sync kapali";
+
+  analyticsTotal.textContent = String(total);
+  analyticsKnown.textContent = String(known);
+  analyticsLearning.textContent = String(learning);
+  analyticsDue.textContent = String(dueNow);
+  analyticsCopy.textContent = total
+    ? `${uniqueSites.size || 1} site, ${syncedLabel}, ${currentSettings.subtitleHistoryLimit || 10} satir history.`
+    : "Kayitlar geldikce ogrenme ozetin burada gorunecek.";
+
+  if (!total) {
+    analyticsSummary.textContent = "Ilk kartlari kaydettiginde tekrar yogunlugu ve ilerleme burada hesaplanir.";
+    return;
+  }
+
+  const accuracy = Math.round((known / Math.max(total, 1)) * 100);
+  analyticsSummary.textContent = `${accuracy}% bilinen, ${dueNow} kart hemen tekrar bekliyor, ${uniqueSites.size || 1} farkli siteden veri var.`;
+}
+
 function formatSavedDetails(entry) {
   const details = entry?.details || {};
   const lines = [];
@@ -255,6 +367,12 @@ function formatSavedDetails(entry) {
     : [];
   const firstPhrase = Array.isArray(details.phraseMatches) ? details.phraseMatches[0] : null;
   const firstExample = Array.isArray(details.examples) ? details.examples[0] : "";
+  const grammar = details.grammarBreakdown
+    ? [details.grammarBreakdown.summary, details.grammarBreakdown.structure, details.grammarBreakdown.tense]
+        .filter(Boolean)
+        .join(" • ")
+    : "";
+  const insight = Array.isArray(details.contextInsights) ? details.contextInsights[0] : "";
 
   if (firstDefinition) {
     lines.push(
@@ -285,6 +403,18 @@ function formatSavedDetails(entry) {
   if (firstExample) {
     lines.push(
       `<p class="detail-line"><span class="detail-label">Example:</span> ${escapeHtml(firstExample)}</p>`
+    );
+  }
+
+  if (grammar) {
+    lines.push(
+      `<p class="detail-line"><span class="detail-label">Grammar:</span> ${escapeHtml(grammar)}</p>`
+    );
+  }
+
+  if (insight) {
+    lines.push(
+      `<p class="detail-line"><span class="detail-label">Insight:</span> ${escapeHtml(insight)}</p>`
     );
   }
 
@@ -390,10 +520,12 @@ function renderSiteProfileCard() {
 
   siteProfileName.textContent = currentPageContext?.siteLabel || siteId;
   siteProfileCopy.textContent =
-    "Bu site icin hover hizi, tooltip yeri ve boyutu ayri tutulur. Sorun cikarsa backup surume donebiliriz.";
+    "Bu site icin hover hizi, tooltip yeri, panel modu ve OCR fallback ayri tutulur.";
   profileHoverDelay.value = String(profileSettings.hoverDelayMs || 140);
   profilePlacement.value = profileSettings.tooltipPlacement || "auto";
   profileSize.value = profileSettings.tooltipSize || "balanced";
+  profileDisplayMode.value = profileSettings.displayMode || "auto";
+  profileOcrEnabled.checked = Boolean(profileSettings.ocrEnabled);
 }
 
 function renderReviewPanel() {
@@ -529,7 +661,21 @@ function buildAnkiExport(entries) {
           : "",
         Array.isArray(entry.details?.phraseMatches) && entry.details.phraseMatches[0]?.text
           ? `Phrase: ${entry.details.phraseMatches[0].text} -> ${entry.details.phraseMatches[0].translatedText}`
-          : ""
+          : "",
+        entry.details?.grammarBreakdown?.summary
+          ? `Grammar: ${[
+              entry.details.grammarBreakdown.summary,
+              entry.details.grammarBreakdown.structure,
+              entry.details.grammarBreakdown.tense
+            ]
+              .filter(Boolean)
+              .join(" • ")}`
+          : "",
+        Array.isArray(entry.details?.contextInsights) && entry.details.contextInsights.length
+          ? `Insights: ${entry.details.contextInsights.join(" | ")}`
+          : "",
+        entry.pageUrl ? `URL: ${entry.pageUrl}` : "",
+        entry.details?.pronunciation?.lang ? `Voice: ${entry.details.pronunciation.lang}` : ""
       ]
         .filter(Boolean)
         .join("<br>");
@@ -545,21 +691,30 @@ function buildCsvExport(entries) {
   const header = [
     "sourceText",
     "translatedText",
+    "sourceLang",
+    "targetLang",
     "context",
     "hostname",
+    "pageUrl",
     "savedAt",
     "reviewState",
     "dictionaryDefinition",
     "synonyms",
     "wordForms",
     "examples",
-    "phrase"
+    "phrase",
+    "grammar",
+    "contextInsights",
+    "pronunciationLang"
   ];
   const rows = entries.map((entry) => [
     entry.sourceText,
     entry.translatedText,
+    entry.sourceLang || "",
+    entry.targetLang || "",
     entry.context || "",
     entry.hostname || "",
+    entry.pageUrl || "",
     entry.savedAt || "",
     getReviewLabel(entry),
     entry.details?.dictionaryDefinitions?.[0]?.definition || "",
@@ -570,7 +725,19 @@ function buildCsvExport(entries) {
     Array.isArray(entry.details?.examples) ? entry.details.examples.join(" | ") : "",
     Array.isArray(entry.details?.phraseMatches) && entry.details.phraseMatches[0]?.text
       ? `${entry.details.phraseMatches[0].text} -> ${entry.details.phraseMatches[0].translatedText}`
-      : ""
+      : "",
+    entry.details?.grammarBreakdown
+      ? [
+          entry.details.grammarBreakdown.summary,
+          entry.details.grammarBreakdown.structure,
+          entry.details.grammarBreakdown.tense,
+          ...(entry.details.grammarBreakdown.notes || [])
+        ]
+          .filter(Boolean)
+          .join(" | ")
+      : "",
+    Array.isArray(entry.details?.contextInsights) ? entry.details.contextInsights.join(" | ") : "",
+    entry.details?.pronunciation?.lang || ""
   ]);
 
   return [header, ...rows]
@@ -607,21 +774,58 @@ function normalizeSettings(settings) {
   const base = {
     sourceLang: "auto",
     targetLang: "tr",
+    displayMode: "auto",
+    subtitleHistoryLimit: 10,
+    syncWordPool: true,
     siteProfiles: {
       youtube: {
         hoverDelayMs: 110,
         tooltipPlacement: "right",
-        tooltipSize: "compact"
+        tooltipSize: "compact",
+        displayMode: "tooltip",
+        ocrEnabled: false
       },
       netflix: {
         hoverDelayMs: 150,
         tooltipPlacement: "top",
-        tooltipSize: "balanced"
+        tooltipSize: "balanced",
+        displayMode: "docked",
+        ocrEnabled: true
       },
       max: {
         hoverDelayMs: 175,
         tooltipPlacement: "left",
-        tooltipSize: "compact"
+        tooltipSize: "compact",
+        displayMode: "docked",
+        ocrEnabled: true
+      },
+      "prime-video": {
+        hoverDelayMs: 160,
+        tooltipPlacement: "left",
+        tooltipSize: "balanced",
+        displayMode: "docked",
+        ocrEnabled: true
+      },
+      "disney-plus": {
+        hoverDelayMs: 160,
+        tooltipPlacement: "top",
+        tooltipSize: "balanced",
+        displayMode: "docked",
+        ocrEnabled: true
+      },
+      udemy: {
+        hoverDelayMs: 115,
+        tooltipPlacement: "right",
+        tooltipSize: "compact",
+        displayMode: "tooltip",
+        ocrEnabled: false
+      },
+      twitch: {
+        hoverDelayMs: 125,
+        tooltipPlacement: "right",
+        tooltipSize: "compact",
+        displayMode: "tooltip",
+        ocrEnabled: false
       }
     }
   };
@@ -633,6 +837,12 @@ function normalizeSettings(settings) {
   return {
     sourceLang: settings.sourceLang || base.sourceLang,
     targetLang: settings.targetLang || base.targetLang,
+    displayMode: settings.displayMode || base.displayMode,
+    subtitleHistoryLimit: Number(settings.subtitleHistoryLimit) || base.subtitleHistoryLimit,
+    syncWordPool:
+      typeof settings.syncWordPool === "boolean"
+        ? settings.syncWordPool
+        : base.syncWordPool,
     siteProfiles: {
       ...base.siteProfiles,
       ...(settings.siteProfiles || {})

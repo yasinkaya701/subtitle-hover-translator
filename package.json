@@ -1,6 +1,6 @@
 {
   "name": "subtitle-hover-translator",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Interactive subtitle translator for unknown words and sentence selections.",
   "private": true,
   "scripts": {

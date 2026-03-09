@@ -22,6 +22,9 @@ const TOOLTIP_HIDE_DELAY_MS = 220;
 const TOOLTIP_INTERACTION_GRACE_MS = 1400;
 const TOOLTIP_PLAYER_GUARD_PX = 22;
 const LOOSE_TEXT_MAX_CHARS = 640;
+const SUBTITLE_HISTORY_POLL_MS = 900;
+const OCR_SNAPSHOT_TTL_MS = 1400;
+const OCR_TRACK_WORD_DISTANCE_PX = 36;
 const extensionApi = globalThis.browser || globalThis.chrome;
 const usesPromiseMessagingApi =
   typeof globalThis.browser !== "undefined" && extensionApi === globalThis.browser;
@@ -55,17 +58,23 @@ const SITE_PROFILE_BEHAVIORS = {
   youtube: {
     hoverDelayMs: 110,
     tooltipPlacement: "right",
-    tooltipSize: "compact"
+    tooltipSize: "compact",
+    displayMode: "tooltip",
+    ocrEnabled: false
   },
   netflix: {
     hoverDelayMs: 150,
     tooltipPlacement: "top",
-    tooltipSize: "balanced"
+    tooltipSize: "balanced",
+    displayMode: "docked",
+    ocrEnabled: true
   },
   max: {
     hoverDelayMs: 175,
     tooltipPlacement: "left",
-    tooltipSize: "compact"
+    tooltipSize: "compact",
+    displayMode: "docked",
+    ocrEnabled: true
   }
 };
 const VIDEO_SITE_PROFILES = [
@@ -151,7 +160,11 @@ const state = {
   enabled: false,
   settings: {
     sourceLang: "auto",
-    targetLang: "tr"
+    targetLang: "tr",
+    displayMode: "auto",
+    subtitleHistoryLimit: 10,
+    syncWordPool: false,
+    siteProfiles: {}
   },
   pageContext: null,
   tooltip: null,
@@ -197,6 +210,15 @@ const state = {
     moved: false,
     startPoint: null,
     startWord: null
+  },
+  subtitleHistory: [],
+  subtitleHistorySignature: "",
+  subtitleHistorySyncAt: 0,
+  ocrCache: {
+    at: 0,
+    key: "",
+    snapshot: null,
+    pending: null
   },
   nextTooltipRequestId: 0,
   activeTooltipRequestId: 0
@@ -284,6 +306,11 @@ function init() {
   });
 
   window.setInterval(() => scheduleContextRefresh(), CONTEXT_REFRESH_INTERVAL_MS);
+  window.setInterval(() => {
+    captureSubtitleHistoryTick().catch(() => {
+      // ignore history polling errors
+    });
+  }, SUBTITLE_HISTORY_POLL_MS);
 }
 
 function setDocumentDebugState(status) {
@@ -341,7 +368,7 @@ function handleMouseMove(event) {
   clearTimeout(state.hideTimer);
 
   state.hoverTimer = window.setTimeout(async () => {
-    const hoveredWord = getHoveredWord(event.clientX, event.clientY);
+    const hoveredWord = await getHoveredWordWithFallback(event.clientX, event.clientY);
 
     if (!hoveredWord) {
       state.lastHoverKey = "";
@@ -606,6 +633,13 @@ function handleDocumentKeyDown(event) {
     event.preventDefault();
     event.stopPropagation();
     toggleTooltipPinned();
+    return;
+  }
+
+  if (normalizedKey === "r") {
+    event.preventDefault();
+    event.stopPropagation();
+    playCurrentPayloadPronunciation(1);
   }
 }
 
@@ -865,6 +899,229 @@ function getHoveredWord(clientX, clientY, options = {}) {
   }
 
   return null;
+}
+
+async function getHoveredWordWithFallback(clientX, clientY, options = {}) {
+  const directMatch = getHoveredWord(clientX, clientY, options);
+  if (directMatch) {
+    return directMatch;
+  }
+
+  if (!state.pageContext?.hasVisibleVideo || !getActiveSiteBehavior().ocrEnabled) {
+    return null;
+  }
+
+  return getOcrWordAtPoint(clientX, clientY, options);
+}
+
+async function getOcrWordAtPoint(clientX, clientY, options = {}) {
+  const snapshot = await getOcrSubtitleSnapshot();
+  if (!snapshot?.entries?.length || !snapshot.rect) {
+    return null;
+  }
+
+  const maxDistance = options.allowNearby
+    ? options.maxDistance ?? OCR_TRACK_WORD_DISTANCE_PX
+    : OCR_TRACK_WORD_DISTANCE_PX;
+
+  if (!isPointNearRect(snapshot.rect, clientX, clientY, maxDistance)) {
+    return null;
+  }
+
+  let nearestEntry = null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+
+  for (const entry of snapshot.entries) {
+    const distance = getDistanceToRect(entry.rect, clientX, clientY);
+    if (distance === 0) {
+      return {
+        word: entry.word,
+        rect: entry.rect,
+        index: entry.index,
+        context: clipContext(snapshot.text),
+        virtualEntries: snapshot.entries,
+        virtualCueKey: snapshot.key,
+        source: "ocr"
+      };
+    }
+
+    if (distance < nearestDistance) {
+      nearestEntry = entry;
+      nearestDistance = distance;
+    }
+  }
+
+  if (!nearestEntry || nearestDistance > maxDistance) {
+    return null;
+  }
+
+  return {
+    word: nearestEntry.word,
+    rect: nearestEntry.rect,
+    index: nearestEntry.index,
+    context: clipContext(snapshot.text),
+    virtualEntries: snapshot.entries,
+    virtualCueKey: snapshot.key,
+    source: "ocr"
+  };
+}
+
+async function getOcrSubtitleSnapshot() {
+  if (
+    typeof globalThis.TextDetector === "undefined" ||
+    typeof globalThis.createImageBitmap !== "function"
+  ) {
+    return null;
+  }
+
+  const videoRect = getPrimaryVideoRect();
+  if (!videoRect) {
+    return null;
+  }
+
+  const currentTime = Math.round(Number(getPrimaryVideoElement()?.currentTime || 0) * 10);
+  const key = [
+    location.href,
+    currentTime,
+    Math.round(videoRect.left),
+    Math.round(videoRect.top),
+    Math.round(videoRect.width),
+    Math.round(videoRect.height)
+  ].join("|");
+
+  if (
+    state.ocrCache.snapshot &&
+    state.ocrCache.key === key &&
+    Date.now() - state.ocrCache.at < OCR_SNAPSHOT_TTL_MS
+  ) {
+    return state.ocrCache.snapshot;
+  }
+
+  if (state.ocrCache.pending && state.ocrCache.key === key) {
+    return state.ocrCache.pending;
+  }
+
+  state.ocrCache.key = key;
+  state.ocrCache.pending = captureOcrSubtitleSnapshot(videoRect, key)
+    .then((snapshot) => {
+      state.ocrCache.at = Date.now();
+      state.ocrCache.snapshot = snapshot;
+      return snapshot;
+    })
+    .catch(() => null)
+    .finally(() => {
+      state.ocrCache.pending = null;
+    });
+
+  return state.ocrCache.pending;
+}
+
+async function captureOcrSubtitleSnapshot(videoRect, key) {
+  const imageDataUrl = await sendRuntimeMessage({
+    type: "CAPTURE_VISIBLE_TAB"
+  }).then((response) => response.imageDataUrl);
+
+  if (!imageDataUrl) {
+    return null;
+  }
+
+  const image = await loadImageFromDataUrl(imageDataUrl);
+  const scale = Math.max(window.devicePixelRatio || 1, 1);
+  const cropRect = {
+    left: Math.max(0, Math.round((videoRect.left + videoRect.width * 0.08) * scale)),
+    top: Math.max(0, Math.round((videoRect.top + videoRect.height * 0.56) * scale)),
+    width: Math.max(80, Math.round(videoRect.width * 0.84 * scale)),
+    height: Math.max(42, Math.round(videoRect.height * 0.28 * scale))
+  };
+
+  const canvas = document.createElement("canvas");
+  canvas.width = cropRect.width;
+  canvas.height = cropRect.height;
+  const context = canvas.getContext("2d", {
+    willReadFrequently: true
+  });
+
+  if (!context) {
+    return null;
+  }
+
+  context.drawImage(
+    image,
+    cropRect.left,
+    cropRect.top,
+    cropRect.width,
+    cropRect.height,
+    0,
+    0,
+    cropRect.width,
+    cropRect.height
+  );
+
+  const detector = new globalThis.TextDetector();
+  const blocks = await detector.detect(canvas);
+  if (!Array.isArray(blocks) || !blocks.length) {
+    return null;
+  }
+
+  const entries = [];
+  const contextLines = [];
+
+  for (const block of blocks) {
+    const rawValue = normalizeWhitespace(block?.rawValue || "");
+    const box = block?.boundingBox;
+    if (!rawValue || !box?.width || !box?.height) {
+      continue;
+    }
+
+    contextLines.push(rawValue);
+    const words = rawValue.match(WORD_REGEX) || [];
+    if (!words.length) {
+      continue;
+    }
+
+    const totalChars = words.reduce((sum, word) => sum + word.length, 0);
+    let currentLeft = box.x;
+
+    words.forEach((word) => {
+      const ratio = totalChars ? word.length / totalChars : 1 / words.length;
+      const width = Math.max((box.width * ratio), 14);
+      const rect = {
+        left: cropRect.left / scale + currentLeft / scale,
+        top: cropRect.top / scale + box.y / scale,
+        right: cropRect.left / scale + (currentLeft + width) / scale,
+        bottom: cropRect.top / scale + (box.y + box.height) / scale,
+        width: width / scale,
+        height: box.height / scale
+      };
+
+      entries.push({
+        index: entries.length,
+        word,
+        rect
+      });
+      currentLeft += width;
+    });
+  }
+
+  if (!entries.length) {
+    return null;
+  }
+
+  return {
+    key,
+    text: clipContext(contextLines.join(" ")),
+    entries,
+    rect: mergeRects(entries.map((entry) => entry.rect))
+  };
+}
+
+function loadImageFromDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("OCR image could not be decoded"));
+    image.src = dataUrl;
+  });
 }
 
 function getActiveCueWordAtPoint(clientX, clientY, options = {}) {
@@ -1879,7 +2136,14 @@ function getActiveSiteBehavior() {
       : "auto",
     tooltipSize: ["compact", "balanced", "wide"].includes(saved.tooltipSize || builtIn.tooltipSize)
       ? saved.tooltipSize || builtIn.tooltipSize
-      : "balanced"
+      : "balanced",
+    displayMode: ["auto", "tooltip", "docked"].includes(saved.displayMode || builtIn.displayMode)
+      ? saved.displayMode || builtIn.displayMode
+      : "auto",
+    ocrEnabled:
+      typeof saved.ocrEnabled === "boolean"
+        ? saved.ocrEnabled
+        : Boolean(builtIn.ocrEnabled)
   };
 }
 
@@ -1909,6 +2173,53 @@ function getTooltipPreferredWidth(kind) {
 
 function getTooltipPlacementPreference() {
   return getActiveSiteBehavior().tooltipPlacement;
+}
+
+function getEffectiveDisplayMode() {
+  const globalMode = state.settings?.displayMode || "auto";
+  if (globalMode === "tooltip" || globalMode === "docked") {
+    return globalMode;
+  }
+
+  const siteMode = getActiveSiteBehavior().displayMode || "auto";
+  if (siteMode === "tooltip" || siteMode === "docked") {
+    return siteMode;
+  }
+
+  return state.pageContext?.pageMode === "video" ? "docked" : "tooltip";
+}
+
+function playCurrentPayloadPronunciation(rate = 1) {
+  if (!state.currentPayload?.sourceText || !globalThis.speechSynthesis) {
+    return;
+  }
+
+  const pronunciation = state.currentPayload?.details?.pronunciation || {};
+  const utterance = new SpeechSynthesisUtterance(state.currentPayload.sourceText);
+  utterance.lang = pronunciation.lang || resolveSpeechLanguage(state.currentPayload.sourceLang);
+  utterance.rate = rate;
+  utterance.pitch = 1;
+
+  globalThis.speechSynthesis.cancel();
+  globalThis.speechSynthesis.speak(utterance);
+  pinTooltip(8_000);
+}
+
+function resolveSpeechLanguage(sourceLang) {
+  const normalized = String(sourceLang || "").toLowerCase();
+  if (normalized.startsWith("tr")) {
+    return "tr-TR";
+  }
+  if (normalized.startsWith("de")) {
+    return "de-DE";
+  }
+  if (normalized.startsWith("fr")) {
+    return "fr-FR";
+  }
+  if (normalized.startsWith("es")) {
+    return "es-ES";
+  }
+  return "en-US";
 }
 
 function isEditableTarget(target) {
@@ -2511,7 +2822,28 @@ function cloneTranslationDetails(details) {
           partOfSpeech: String(entry?.partOfSpeech || ""),
           examples: Array.isArray(entry?.examples) ? [...entry.examples] : []
         }))
-      : []
+      : [],
+    grammarBreakdown: details?.grammarBreakdown
+      ? {
+          summary: String(details.grammarBreakdown.summary || ""),
+          structure: String(details.grammarBreakdown.structure || ""),
+          tense: String(details.grammarBreakdown.tense || ""),
+          notes: Array.isArray(details.grammarBreakdown.notes)
+            ? [...details.grammarBreakdown.notes]
+            : []
+        }
+      : null,
+    contextInsights: Array.isArray(details?.contextInsights)
+      ? [...details.contextInsights]
+      : [],
+    pronunciation: details?.pronunciation
+      ? {
+          text: String(details.pronunciation.text || ""),
+          lang: String(details.pronunciation.lang || ""),
+          label: String(details.pronunciation.label || ""),
+          slowerLabel: String(details.pronunciation.slowerLabel || "")
+        }
+      : null
   };
 }
 
@@ -2696,13 +3028,19 @@ function showTooltip(payload) {
   state.tooltipManualPinned = false;
   tooltip.dataset.kind = payload.title || "";
   tooltip.dataset.surface = resolveTooltipSurface(payload.rect);
+  tooltip.dataset.layout = getEffectiveDisplayMode();
   tooltip.dataset.manualPinned = "false";
 
   tooltip.querySelector("[data-role='badge']").textContent = payload.title;
   tooltip.querySelector("[data-role='source']").textContent = payload.sourceText;
   tooltip.querySelector("[data-role='target']").textContent = payload.translatedText;
+  pushSubtitleHistoryEntry(payload.context || payload.sourceText, payload.title || "Kelime");
   updateTooltipPinState();
   renderTooltipDetails(tooltip, payload.details, payload.sourceText, payload.context);
+  renderSubtitleHistorySection(
+    tooltip.querySelector("[data-role='history']"),
+    tooltip.querySelector("[data-role='history-section']")
+  );
   tooltip.querySelector("[data-role='context']").textContent =
     payload.context && payload.context !== payload.sourceText
       ? clipContext(payload.context)
@@ -2723,6 +3061,7 @@ function showTooltipError(message, rect, point) {
   state.tooltipManualPinned = false;
   tooltip.dataset.kind = "Hata";
   tooltip.dataset.surface = resolveTooltipSurface(rect);
+  tooltip.dataset.layout = getEffectiveDisplayMode();
   tooltip.dataset.manualPinned = "false";
 
   tooltip.querySelector("[data-role='badge']").textContent = "Hata";
@@ -2730,6 +3069,10 @@ function showTooltipError(message, rect, point) {
   tooltip.querySelector("[data-role='target']").textContent = "";
   updateTooltipPinState();
   renderTooltipDetails(tooltip, null, "", "");
+  renderSubtitleHistorySection(
+    tooltip.querySelector("[data-role='history']"),
+    tooltip.querySelector("[data-role='history-section']")
+  );
   tooltip.querySelector("[data-role='context']").textContent = "";
   tooltip.querySelector("[data-role='status']").textContent = "";
   tooltip.querySelector("[data-role='save']").disabled = true;
@@ -2776,14 +3119,28 @@ function ensureTooltip() {
         <p class="sht-section-title">Example mode</p>
         <div class="sht-example-list" data-role="examples"></div>
       </section>
+      <section class="sht-section" data-role="grammar-section" hidden>
+        <p class="sht-section-title">Grammar breakdown</p>
+        <div class="sht-definition-list" data-role="grammar"></div>
+      </section>
+      <section class="sht-section" data-role="insights-section" hidden>
+        <p class="sht-section-title">Context engine</p>
+        <div class="sht-chip-list" data-role="insights"></div>
+      </section>
+      <section class="sht-section" data-role="history-section" hidden>
+        <p class="sht-section-title">Subtitle history</p>
+        <div class="sht-example-list" data-role="history"></div>
+      </section>
       <p class="sht-context" data-role="context"></p>
       <div class="sht-actions">
+        <button type="button" class="sht-ghost" data-role="pronounce">Dinle</button>
+        <button type="button" class="sht-ghost" data-role="pronounce-slow">Yavas</button>
         <button type="button" class="sht-pin" data-role="pin">Sabitle</button>
         <button type="button" class="sht-save" data-role="save">Listeme kaydet</button>
         <button type="button" class="sht-close" data-role="close">Kapat</button>
       </div>
       <div class="sht-status" data-role="status"></div>
-      <p class="sht-hint">S kaydet • P sabitle • Esc kapa</p>
+      <p class="sht-hint">S kaydet • P sabitle • R dinle • Esc kapa</p>
     </div>
   `;
 
@@ -2830,6 +3187,14 @@ function ensureTooltip() {
     .querySelector("[data-role='save']")
     .addEventListener("click", handleSaveUnknownWord);
 
+  tooltip
+    .querySelector("[data-role='pronounce']")
+    .addEventListener("click", () => playCurrentPayloadPronunciation(1));
+
+  tooltip
+    .querySelector("[data-role='pronounce-slow']")
+    .addEventListener("click", () => playCurrentPayloadPronunciation(0.82));
+
   tooltip.querySelector("[data-role='close']").addEventListener("click", () => {
     hideTooltip(true);
   });
@@ -2859,6 +3224,10 @@ function renderTooltipDetails(tooltip, details, sourceText, contextText = "") {
   const definitionsElement = tooltip.querySelector("[data-role='definitions']");
   const examplesSection = tooltip.querySelector("[data-role='examples-section']");
   const examplesElement = tooltip.querySelector("[data-role='examples']");
+  const grammarSection = tooltip.querySelector("[data-role='grammar-section']");
+  const grammarElement = tooltip.querySelector("[data-role='grammar']");
+  const insightsSection = tooltip.querySelector("[data-role='insights-section']");
+  const insightsElement = tooltip.querySelector("[data-role='insights']");
   const safeDetails = details || {};
   const metaParts = [];
 
@@ -2890,6 +3259,12 @@ function renderTooltipDetails(tooltip, details, sourceText, contextText = "") {
 
   renderExamples(examplesElement, contextText, safeDetails.examples || []);
   examplesSection.hidden = examplesElement.childElementCount === 0;
+
+  renderGrammarBreakdown(grammarElement, safeDetails.grammarBreakdown);
+  grammarSection.hidden = grammarElement.childElementCount === 0;
+
+  renderChipItems(insightsElement, safeDetails.contextInsights || []);
+  insightsSection.hidden = insightsElement.childElementCount === 0;
 }
 
 function renderMeaningGroups(container, groups) {
@@ -3073,12 +3448,166 @@ function renderExamples(container, contextText, examples) {
   }
 }
 
+function renderGrammarBreakdown(container, grammarBreakdown) {
+  container.textContent = "";
+  if (!grammarBreakdown) {
+    return;
+  }
+
+  const { summary, structure, tense, notes } = grammarBreakdown;
+  const lines = [
+    summary ? `Tur: ${summary}` : "",
+    structure ? `Yapi: ${structure}` : "",
+    tense ? `Zaman: ${tense}` : ""
+  ].filter(Boolean);
+
+  for (const line of lines) {
+    const item = document.createElement("div");
+    item.className = "sht-definition-item";
+
+    const textElement = document.createElement("p");
+    textElement.className = "sht-definition-text";
+    textElement.textContent = line;
+    item.appendChild(textElement);
+    container.appendChild(item);
+  }
+
+  for (const note of Array.isArray(notes) ? notes : []) {
+    const item = document.createElement("div");
+    item.className = "sht-definition-item";
+
+    const textElement = document.createElement("p");
+    textElement.className = "sht-definition-text";
+    textElement.textContent = note;
+    item.appendChild(textElement);
+    container.appendChild(item);
+  }
+}
+
+function renderSubtitleHistorySection(container, section) {
+  if (!container || !section) {
+    return;
+  }
+
+  container.textContent = "";
+  const displayMode = getEffectiveDisplayMode();
+  const history = displayMode === "docked" ? state.subtitleHistory.slice(0, 6) : [];
+
+  for (const entry of history) {
+    const item = document.createElement("div");
+    item.className = "sht-example-item";
+
+    const label = document.createElement("span");
+    label.className = "sht-definition-label";
+    label.textContent = entry.source || "Satir";
+
+    const textElement = document.createElement("p");
+    textElement.className = "sht-example-text";
+    textElement.textContent = entry.text;
+
+    item.append(label, textElement);
+    container.appendChild(item);
+  }
+
+  section.hidden = container.childElementCount === 0;
+}
+
+async function captureSubtitleHistoryTick() {
+  if (!state.enabled || !state.pageContext?.isVideoPage) {
+    return;
+  }
+
+  const text = getCurrentSubtitleContextForHistory();
+  if (!text) {
+    return;
+  }
+
+  pushSubtitleHistoryEntry(text, "Canli");
+  await syncSubtitleHistoryToBackground();
+}
+
+function getCurrentSubtitleContextForHistory() {
+  const activeCueSnapshot = getActiveCueSnapshot();
+  if (activeCueSnapshot?.text) {
+    return activeCueSnapshot.text;
+  }
+
+  const candidates = [...getProfileSubtitleCandidates(), ...getFallbackSubtitleCandidates()];
+  for (const candidate of candidates) {
+    const text = clipContext(getContainerTextSnapshot(candidate));
+    if (text) {
+      return text;
+    }
+  }
+
+  return "";
+}
+
+function pushSubtitleHistoryEntry(text, source = "Altyazi") {
+  const normalizedText = clipContext(text);
+  if (!normalizedText) {
+    return;
+  }
+
+  const currentHead = state.subtitleHistory[0]?.text || "";
+  if (currentHead === normalizedText) {
+    return;
+  }
+
+  state.subtitleHistory.unshift({
+    text: normalizedText,
+    source,
+    savedAt: new Date().toISOString()
+  });
+  state.subtitleHistory = state.subtitleHistory.slice(
+    0,
+    Math.max(5, Number(state.settings?.subtitleHistoryLimit || 10))
+  );
+}
+
+async function syncSubtitleHistoryToBackground() {
+  const signature = state.subtitleHistory.map((entry) => entry.text).join("|");
+  if (!signature || signature === state.subtitleHistorySignature) {
+    return;
+  }
+
+  if (Date.now() - state.subtitleHistorySyncAt < 500) {
+    return;
+  }
+
+  state.subtitleHistorySignature = signature;
+  state.subtitleHistorySyncAt = Date.now();
+
+  await sendRuntimeMessage({
+    type: "UPDATE_SUBTITLE_HISTORY",
+    items: state.subtitleHistory
+  }).catch(() => {
+    // ignore background sync errors
+  });
+}
+
 function positionTooltip(rect, point) {
-  if (!state.tooltip || !rect) {
+  if (!state.tooltip) {
     return;
   }
 
   const tooltip = state.tooltip;
+  const layout = tooltip.dataset.layout || getEffectiveDisplayMode();
+  if (layout === "docked") {
+    const margin = 16;
+    const preferredWidth = Math.min(getTooltipPreferredWidth(tooltip.dataset.kind || "Kelime") + 44, 430);
+    const width = Math.min(preferredWidth, window.innerWidth - margin * 2);
+    const height = Math.min(window.innerHeight * 0.66, 460);
+    tooltip.style.width = `${width}px`;
+    tooltip.style.left = `${Math.max(margin, window.innerWidth - width - margin)}px`;
+    tooltip.style.top = `${Math.max(margin, window.innerHeight - height - margin)}px`;
+    return;
+  }
+
+  if (!rect) {
+    return;
+  }
+
   const margin = 14;
   const preferredWidth = getTooltipPreferredWidth(tooltip.dataset.kind || "Kelime");
   const width = Math.min(preferredWidth, window.innerWidth - margin * 2);
@@ -3274,6 +3803,9 @@ function hideTooltip(resetState) {
   clearTimeout(state.hoverTimer);
   clearTimeout(state.hideTimer);
   clearTimeout(state.selectionTimer);
+  if (globalThis.speechSynthesis) {
+    globalThis.speechSynthesis.cancel();
+  }
   if (state.tooltip) {
     state.tooltip.hidden = true;
   }
@@ -3597,8 +4129,16 @@ function refreshPageContext(force = false) {
     key: "",
     snapshot: null
   };
+  state.ocrCache = {
+    at: 0,
+    key: "",
+    snapshot: null,
+    pending: null
+  };
   state.pageContext = nextPageContext;
   state.lastPointerSample = null;
+  state.subtitleHistory = [];
+  state.subtitleHistorySignature = "";
   resetDragSelection();
   resetTouchSelection();
 

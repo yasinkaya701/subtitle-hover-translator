@@ -31,6 +31,12 @@
   backdrop-filter: var(--sht-backdrop);
 }
 
+.sht-root[data-layout="docked"] {
+  width: min(390px, calc(100vw - 28px));
+  max-height: min(66vh, 460px);
+  border-radius: 22px;
+}
+
 .sht-root[data-surface="video"] {
   --sht-bg-top: rgba(36, 26, 20, 0.64);
   --sht-bg-bottom: rgba(20, 15, 12, 0.5);
@@ -215,7 +221,7 @@
 
 .sht-actions {
   display: grid;
-  grid-template-columns: 0.9fr 1.2fr 0.9fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin-top: 10px;
   position: sticky;
@@ -233,9 +239,8 @@
 }
 
 .sht-actions button {
-  flex: 1;
   border: 0;
-  border-radius: 999px;
+  border-radius: 14px;
   padding: 9px 11px;
   font: inherit;
   cursor: pointer;
@@ -249,9 +254,15 @@
 .sht-save {
   background: #b45732;
   color: #fff7ef;
+  grid-column: span 2;
 }
 
 .sht-pin {
+  background: rgba(255, 237, 223, 0.08);
+  color: #ffe3d1;
+}
+
+.sht-ghost {
   background: rgba(255, 237, 223, 0.08);
   color: #ffe3d1;
 }
@@ -265,6 +276,18 @@
 .sht-close {
   background: var(--sht-close-bg);
   color: #ffe3d1;
+}
+
+.sht-root[data-layout="docked"] .sht-card {
+  padding: 14px 14px 12px;
+}
+
+.sht-root[data-layout="docked"] .sht-source {
+  font-size: 16px;
+}
+
+.sht-root[data-layout="docked"] .sht-target {
+  font-size: 18px;
 }
 
 .sht-status {

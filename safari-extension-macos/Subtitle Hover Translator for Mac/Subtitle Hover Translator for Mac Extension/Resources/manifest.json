@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Subtitle Hover Translator",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Translate hovered subtitle or page text words and selected lines directly on websites.",
   "icons": {
     "16": "icons/icon-16.png",

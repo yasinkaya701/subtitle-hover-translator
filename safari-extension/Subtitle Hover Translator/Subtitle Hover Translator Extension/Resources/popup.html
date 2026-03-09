@@ -83,7 +83,32 @@
               <option value="de">Almanca</option>
             </select>
           </label>
+
+          <label>
+            Gosterim
+            <select id="display-mode">
+              <option value="auto">Otomatik</option>
+              <option value="tooltip">Tooltip</option>
+              <option value="docked">Docked panel</option>
+            </select>
+          </label>
+
+          <label>
+            History limiti
+            <select id="subtitle-history-limit">
+              <option value="6">6 satir</option>
+              <option value="8">8 satir</option>
+              <option value="10">10 satir</option>
+              <option value="12">12 satir</option>
+              <option value="16">16 satir</option>
+            </select>
+          </label>
         </div>
+
+        <label class="inline-toggle">
+          <input id="sync-word-pool" type="checkbox" />
+          <span>Cloud sync ve ortak kelime havuzu acik olsun</span>
+        </label>
 
         <p id="save-status" class="save-status"></p>
       </section>
@@ -129,6 +154,63 @@
               <option value="wide">Genis</option>
             </select>
           </label>
+
+          <label>
+            Panel modu
+            <select id="profile-display-mode">
+              <option value="auto">Otomatik</option>
+              <option value="tooltip">Tooltip</option>
+              <option value="docked">Docked panel</option>
+            </select>
+          </label>
+        </div>
+
+        <label class="inline-toggle">
+          <input id="profile-ocr-enabled" type="checkbox" />
+          <span>OCR fallback acik olsun</span>
+        </label>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <h2>Ogrenme analitigi</h2>
+            <p class="subtle" id="analytics-copy">Kayitlar geldikce ogrenme ozetin burada gorunecek.</p>
+          </div>
+        </div>
+
+        <div class="analytics-grid" id="analytics-grid">
+          <div class="metric-card">
+            <span class="metric-label">Toplam</span>
+            <strong id="analytics-total">0</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Bildim</span>
+            <strong id="analytics-known">0</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Tekrarda</span>
+            <strong id="analytics-learning">0</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Due now</span>
+            <strong id="analytics-due">0</strong>
+          </div>
+        </div>
+
+        <p class="subtle" id="analytics-summary">Analitik hazirlaniyor...</p>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <h2>Subtitle history</h2>
+            <p class="subtle" id="subtitle-history-copy">Aktif sekmedeki son altyazi satirlari.</p>
+          </div>
+        </div>
+
+        <div id="subtitle-history-list" class="unknown-words-list empty-state">
+          Video sekmesinde history burada gorunecek.
         </div>
       </section>
 

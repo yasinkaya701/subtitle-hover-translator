@@ -2,23 +2,60 @@ const DEFAULT_SITE_PROFILE_SETTINGS = {
   youtube: {
     hoverDelayMs: 110,
     tooltipPlacement: "right",
-    tooltipSize: "compact"
+    tooltipSize: "compact",
+    displayMode: "tooltip",
+    ocrEnabled: false
   },
   netflix: {
     hoverDelayMs: 150,
     tooltipPlacement: "top",
-    tooltipSize: "balanced"
+    tooltipSize: "balanced",
+    displayMode: "docked",
+    ocrEnabled: true
   },
   max: {
     hoverDelayMs: 175,
     tooltipPlacement: "left",
-    tooltipSize: "compact"
+    tooltipSize: "compact",
+    displayMode: "docked",
+    ocrEnabled: true
+  },
+  "prime-video": {
+    hoverDelayMs: 160,
+    tooltipPlacement: "left",
+    tooltipSize: "balanced",
+    displayMode: "docked",
+    ocrEnabled: true
+  },
+  "disney-plus": {
+    hoverDelayMs: 160,
+    tooltipPlacement: "top",
+    tooltipSize: "balanced",
+    displayMode: "docked",
+    ocrEnabled: true
+  },
+  udemy: {
+    hoverDelayMs: 115,
+    tooltipPlacement: "right",
+    tooltipSize: "compact",
+    displayMode: "tooltip",
+    ocrEnabled: false
+  },
+  twitch: {
+    hoverDelayMs: 125,
+    tooltipPlacement: "right",
+    tooltipSize: "compact",
+    displayMode: "tooltip",
+    ocrEnabled: false
   }
 };
 
 const DEFAULT_SETTINGS = {
   sourceLang: "auto",
   targetLang: "tr",
+  displayMode: "auto",
+  subtitleHistoryLimit: 10,
+  syncWordPool: Boolean(globalThis.browser?.storage?.sync || globalThis.chrome?.storage?.sync),
   siteProfiles: cloneDefaultSiteProfiles()
 };
 
@@ -56,7 +93,9 @@ const IRREGULAR_ADJECTIVE_FORMS = {
 const STORAGE_KEYS = {
   settings: "settings",
   unknownWords: "unknownWords",
-  disabledTabs: "disabledTabs"
+  disabledTabs: "disabledTabs",
+  sharedWordPool: "sharedWordPool",
+  subtitleHistory: "subtitleHistory"
 };
 
 const REVIEW_OUTCOME_CONFIG = {
@@ -67,6 +106,7 @@ const REVIEW_OUTCOME_CONFIG = {
 
 const extensionApi = globalThis.browser || globalThis.chrome;
 const sessionStorageArea = extensionApi.storage.session || extensionApi.storage.local;
+const syncStorageArea = extensionApi.storage.sync || null;
 
 extensionApi.runtime.onInstalled.addListener(async () => {
   const current = await extensionApi.storage.local.get([
@@ -85,16 +125,41 @@ extensionApi.runtime.onInstalled.addListener(async () => {
   }
 
   await sessionStorageArea.set({
-    [STORAGE_KEYS.disabledTabs]: {}
+    [STORAGE_KEYS.disabledTabs]: {},
+    [STORAGE_KEYS.subtitleHistory]: {}
   });
+
+  if (syncStorageArea) {
+    const syncCurrent = await syncStorageArea.get(STORAGE_KEYS.sharedWordPool);
+    if (!Array.isArray(syncCurrent[STORAGE_KEYS.sharedWordPool])) {
+      await syncStorageArea.set({
+        [STORAGE_KEYS.sharedWordPool]: []
+      });
+    }
+  }
 });
 
 extensionApi.tabs.onRemoved.addListener(async (tabId) => {
-  const disabledTabs = await getDisabledTabs();
+  const [disabledTabs, subtitleHistory] = await Promise.all([
+    getDisabledTabs(),
+    getSubtitleHistoryMap()
+  ]);
+
+  let changed = false;
   if (disabledTabs[tabId]) {
     delete disabledTabs[tabId];
+    changed = true;
+  }
+
+  if (subtitleHistory[tabId]) {
+    delete subtitleHistory[tabId];
+    changed = true;
+  }
+
+  if (changed) {
     await sessionStorageArea.set({
-      [STORAGE_KEYS.disabledTabs]: disabledTabs
+      [STORAGE_KEYS.disabledTabs]: disabledTabs,
+      [STORAGE_KEYS.subtitleHistory]: subtitleHistory
     });
   }
 });
@@ -137,14 +202,31 @@ async function handleMessage(message, sender) {
       return {
         entries: await getUnknownWords()
       };
+    case "GET_SUBTITLE_HISTORY":
+      return {
+        history: await getSubtitleHistory(message.tabId ?? sender.tab?.id)
+      };
+    case "UPDATE_SUBTITLE_HISTORY":
+      return {
+        history: await updateSubtitleHistory(message.tabId ?? sender.tab?.id, message.items)
+      };
     case "UPDATE_UNKNOWN_WORD_REVIEW":
       return {
         entry: await updateUnknownWordReview(message.entryId, message.outcome)
+      };
+    case "CAPTURE_VISIBLE_TAB":
+      return {
+        imageDataUrl: await captureVisibleTab(sender)
       };
     case "CLEAR_UNKNOWN_WORDS":
       await extensionApi.storage.local.set({
         [STORAGE_KEYS.unknownWords]: []
       });
+      if (syncStorageArea) {
+        await syncStorageArea.set({
+          [STORAGE_KEYS.sharedWordPool]: []
+        });
+      }
       return { entries: [] };
     default:
       throw new Error(`Unsupported message type: ${message.type}`);
@@ -247,9 +329,24 @@ async function translateText(text, sourceLang = "auto", targetLang = "tr") {
   }
 
   const detectedSourceLanguage = payload[2] || sourceLang;
-  const details = isDictionaryLookupCandidate(normalizedText)
+  const dictionaryDetails = isDictionaryLookupCandidate(normalizedText)
     ? buildTranslationDetails(payload, normalizedText, detectedSourceLanguage)
     : emptyTranslationDetails();
+  const details = sanitizeTranslationDetails({
+    ...dictionaryDetails,
+    grammarBreakdown: buildGrammarBreakdown(
+      normalizedText,
+      translatedText,
+      detectedSourceLanguage
+    ),
+    contextInsights: buildContextInsights(
+      normalizedText,
+      translatedText,
+      detectedSourceLanguage,
+      dictionaryDetails
+    ),
+    pronunciation: buildPronunciationDetails(normalizedText, detectedSourceLanguage)
+  });
 
   return {
     sourceText: normalizedText,
@@ -312,7 +409,10 @@ function emptyTranslationDetails() {
     wordForms: [],
     dictionaryDefinitions: [],
     examples: [],
-    phraseMatches: []
+    phraseMatches: [],
+    grammarBreakdown: null,
+    contextInsights: [],
+    pronunciation: null
   };
 }
 
@@ -373,7 +473,58 @@ function sanitizeTranslationDetails(details) {
           }))
           .filter((entry) => entry.text && entry.translatedText)
           .slice(0, 2)
-      : []
+      : [],
+    grammarBreakdown: sanitizeGrammarBreakdown(details.grammarBreakdown),
+    contextInsights: Array.isArray(details.contextInsights)
+      ? details.contextInsights.map(safeText).filter(Boolean).slice(0, 4)
+      : [],
+    pronunciation: sanitizePronunciation(details.pronunciation)
+  };
+}
+
+function sanitizeGrammarBreakdown(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const summary = safeText(value.summary);
+  const structure = safeText(value.structure);
+  const tense = safeText(value.tense);
+  const notes = Array.isArray(value.notes)
+    ? value.notes.map(safeText).filter(Boolean).slice(0, 4)
+    : [];
+
+  if (!summary && !structure && !tense && !notes.length) {
+    return null;
+  }
+
+  return {
+    summary,
+    structure,
+    tense,
+    notes
+  };
+}
+
+function sanitizePronunciation(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const text = safeText(value.text);
+  const lang = safeText(value.lang);
+  const label = safeText(value.label);
+  const slowerLabel = safeText(value.slowerLabel);
+
+  if (!text) {
+    return null;
+  }
+
+  return {
+    text,
+    lang,
+    label,
+    slowerLabel
   };
 }
 
@@ -703,6 +854,15 @@ function normalizeSettings(settings) {
   const normalized = {
     sourceLang: safeText(settings?.sourceLang) || DEFAULT_SETTINGS.sourceLang,
     targetLang: safeText(settings?.targetLang) || DEFAULT_SETTINGS.targetLang,
+    displayMode: normalizeDisplayMode(settings?.displayMode, DEFAULT_SETTINGS.displayMode),
+    subtitleHistoryLimit: normalizeHistoryLimit(
+      settings?.subtitleHistoryLimit,
+      DEFAULT_SETTINGS.subtitleHistoryLimit
+    ),
+    syncWordPool:
+      typeof settings?.syncWordPool === "boolean"
+        ? settings.syncWordPool
+        : DEFAULT_SETTINGS.syncWordPool,
     siteProfiles: cloneDefaultSiteProfiles()
   };
 
@@ -740,6 +900,7 @@ function normalizeSiteProfileSettings(settings, defaults) {
   const hoverDelayMs = Number(settings?.hoverDelayMs);
   const tooltipPlacement = safeText(settings?.tooltipPlacement) || normalizedDefaults.tooltipPlacement;
   const tooltipSize = safeText(settings?.tooltipSize) || normalizedDefaults.tooltipSize;
+  const displayMode = normalizeDisplayMode(settings?.displayMode, normalizedDefaults.displayMode || "auto");
 
   return {
     hoverDelayMs:
@@ -751,8 +912,25 @@ function normalizeSiteProfileSettings(settings, defaults) {
       : normalizedDefaults.tooltipPlacement || "auto",
     tooltipSize: ["compact", "balanced", "wide"].includes(tooltipSize)
       ? tooltipSize
-      : normalizedDefaults.tooltipSize || "balanced"
+      : normalizedDefaults.tooltipSize || "balanced",
+    displayMode,
+    ocrEnabled:
+      typeof settings?.ocrEnabled === "boolean"
+        ? settings.ocrEnabled
+        : Boolean(normalizedDefaults.ocrEnabled)
   };
+}
+
+function normalizeDisplayMode(value, fallback = "auto") {
+  const normalized = safeText(value);
+  return ["auto", "tooltip", "docked"].includes(normalized) ? normalized : fallback;
+}
+
+function normalizeHistoryLimit(value, fallback = 10) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 5 && numeric <= 24
+    ? Math.round(numeric)
+    : fallback;
 }
 
 function buildInitialReviewState(previousReview) {
@@ -795,6 +973,9 @@ async function saveUnknownWord(payload, sender) {
   await extensionApi.storage.local.set({
     [STORAGE_KEYS.unknownWords]: dedupedEntries.slice(0, 500)
   });
+
+  const settings = await getSettings();
+  await syncSharedWordPool(nextEntry, settings);
 
   return nextEntry;
 }
@@ -847,9 +1028,101 @@ async function getSettings() {
 }
 
 async function getUnknownWords() {
-  const result = await extensionApi.storage.local.get(STORAGE_KEYS.unknownWords);
-  return Array.isArray(result[STORAGE_KEYS.unknownWords])
-    ? result[STORAGE_KEYS.unknownWords].map((entry) => ({
+  const settings = await getSettings();
+  const [localResult, sharedPool] = await Promise.all([
+    extensionApi.storage.local.get(STORAGE_KEYS.unknownWords),
+    getSharedWordPoolEntries(settings)
+  ]);
+  const localEntries = Array.isArray(localResult[STORAGE_KEYS.unknownWords])
+    ? localResult[STORAGE_KEYS.unknownWords]
+    : [];
+
+  const merged = new Map();
+  for (const entry of [...sharedPool, ...localEntries]) {
+    const normalizedEntry = {
+      ...entry,
+      details: sanitizeTranslationDetails(entry?.details),
+      review: buildInitialReviewState(entry?.review)
+    };
+    const current = merged.get(normalizedEntry.id);
+    if (!current || Date.parse(normalizedEntry.savedAt || "") >= Date.parse(current.savedAt || "")) {
+      merged.set(normalizedEntry.id, normalizedEntry);
+    }
+  }
+
+  return Array.from(merged.values()).sort(
+    (left, right) => Date.parse(right.savedAt || "") - Date.parse(left.savedAt || "")
+  );
+}
+
+async function getDisabledTabs() {
+  const result = await sessionStorageArea.get(STORAGE_KEYS.disabledTabs);
+  return result[STORAGE_KEYS.disabledTabs] || {};
+}
+
+async function getSubtitleHistoryMap() {
+  const result = await sessionStorageArea.get(STORAGE_KEYS.subtitleHistory);
+  return result[STORAGE_KEYS.subtitleHistory] || {};
+}
+
+async function getSubtitleHistory(tabId) {
+  if (!tabId) {
+    return [];
+  }
+
+  const subtitleHistory = await getSubtitleHistoryMap();
+  return Array.isArray(subtitleHistory[tabId]) ? subtitleHistory[tabId] : [];
+}
+
+async function updateSubtitleHistory(tabId, items) {
+  if (!tabId) {
+    return [];
+  }
+
+  const settings = await getSettings();
+  const subtitleHistory = await getSubtitleHistoryMap();
+  const limit = settings.subtitleHistoryLimit || DEFAULT_SETTINGS.subtitleHistoryLimit;
+  const normalizedItems = Array.isArray(items)
+    ? items
+        .map((entry) => ({
+          text: safeText(entry?.text),
+          source: safeText(entry?.source),
+          savedAt: safeText(entry?.savedAt) || new Date().toISOString()
+        }))
+        .filter((entry) => entry.text)
+        .slice(0, limit)
+    : [];
+
+  subtitleHistory[tabId] = normalizedItems;
+  await sessionStorageArea.set({
+    [STORAGE_KEYS.subtitleHistory]: subtitleHistory
+  });
+
+  return normalizedItems;
+}
+
+async function captureVisibleTab(sender) {
+  const windowId = sender?.tab?.windowId;
+  if (typeof extensionApi.tabs.captureVisibleTab !== "function") {
+    throw new Error("captureVisibleTab desteklenmiyor");
+  }
+
+  return extensionApi.tabs.captureVisibleTab(windowId, { format: "png" });
+}
+
+async function getSharedWordPoolEntries(settings = null) {
+  if (!syncStorageArea) {
+    return [];
+  }
+
+  const normalizedSettings = settings || (await getSettings());
+  if (!normalizedSettings.syncWordPool) {
+    return [];
+  }
+
+  const result = await syncStorageArea.get(STORAGE_KEYS.sharedWordPool);
+  return Array.isArray(result[STORAGE_KEYS.sharedWordPool])
+    ? result[STORAGE_KEYS.sharedWordPool].map((entry) => ({
         ...entry,
         details: sanitizeTranslationDetails(entry?.details),
         review: buildInitialReviewState(entry?.review)
@@ -857,9 +1130,188 @@ async function getUnknownWords() {
     : [];
 }
 
-async function getDisabledTabs() {
-  const result = await sessionStorageArea.get(STORAGE_KEYS.disabledTabs);
-  return result[STORAGE_KEYS.disabledTabs] || {};
+async function syncSharedWordPool(entry, settings = null) {
+  if (!syncStorageArea || !entry) {
+    return;
+  }
+
+  const normalizedSettings = settings || (await getSettings());
+  if (!normalizedSettings.syncWordPool) {
+    return;
+  }
+
+  const currentEntries = await getSharedWordPoolEntries(normalizedSettings);
+  const compactEntry = buildSharedWordPoolEntry(entry);
+  const nextEntries = currentEntries.filter((item) => item.id !== compactEntry.id);
+  nextEntries.unshift(compactEntry);
+
+  await syncStorageArea.set({
+    [STORAGE_KEYS.sharedWordPool]: nextEntries.slice(0, 60)
+  });
+}
+
+function buildSharedWordPoolEntry(entry) {
+  const safeEntry = {
+    ...entry,
+    details: sanitizeTranslationDetails(entry?.details),
+    review: buildInitialReviewState(entry?.review)
+  };
+
+  return {
+    id: safeEntry.id,
+    sourceText: safeEntry.sourceText,
+    translatedText: safeEntry.translatedText,
+    sourceLang: safeEntry.sourceLang,
+    targetLang: safeEntry.targetLang,
+    context: safeText(safeEntry.context).slice(0, 180),
+    hostname: safeText(safeEntry.hostname),
+    pageUrl: safeText(safeEntry.pageUrl),
+    savedAt: safeText(safeEntry.savedAt) || new Date().toISOString(),
+    details: {
+      headword: safeText(safeEntry.details?.headword),
+      partOfSpeech: safeText(safeEntry.details?.partOfSpeech),
+      synonyms: Array.isArray(safeEntry.details?.synonyms)
+        ? safeEntry.details.synonyms.slice(0, 3)
+        : [],
+      examples: Array.isArray(safeEntry.details?.examples)
+        ? safeEntry.details.examples.slice(0, 2)
+        : [],
+      phraseMatches: Array.isArray(safeEntry.details?.phraseMatches)
+        ? safeEntry.details.phraseMatches.slice(0, 1)
+        : [],
+      grammarBreakdown: sanitizeGrammarBreakdown(safeEntry.details?.grammarBreakdown),
+      contextInsights: Array.isArray(safeEntry.details?.contextInsights)
+        ? safeEntry.details.contextInsights.slice(0, 2)
+        : [],
+      pronunciation: sanitizePronunciation(safeEntry.details?.pronunciation)
+    },
+    review: buildInitialReviewState(safeEntry.review)
+  };
+}
+
+function buildPronunciationDetails(text, language) {
+  const safeSource = safeText(text);
+  if (!safeSource) {
+    return null;
+  }
+
+  const safeLanguage = safeText(language).toLowerCase();
+  const lang = safeLanguage.startsWith("tr")
+    ? "tr-TR"
+    : safeLanguage.startsWith("de")
+      ? "de-DE"
+      : safeLanguage.startsWith("fr")
+        ? "fr-FR"
+        : safeLanguage.startsWith("es")
+          ? "es-ES"
+          : "en-US";
+
+  return {
+    text: safeSource,
+    lang,
+    label: "Dinle",
+    slowerLabel: "Yavas"
+  };
+}
+
+function buildGrammarBreakdown(text, translatedText, language) {
+  const normalizedText = safeText(text);
+  if (!normalizedText) {
+    return null;
+  }
+
+  const parts = normalizedText.split(/\s+/).filter(Boolean);
+  const lowerText = normalizedText.toLowerCase();
+  const notes = [];
+  let summary = parts.length === 1 ? "Tek kelime" : parts.length <= 4 ? "Kisa ifade" : "Cumle";
+  let structure = normalizedText.endsWith("?")
+    ? "Soru yapisi"
+    : /\b(not|never|no|n't)\b/i.test(normalizedText)
+      ? "Olumsuz yapi"
+      : "Duz ifade";
+  let tense = "";
+
+  if (String(language || "").toLowerCase().startsWith("en")) {
+    if (/\b(will|going to)\b/i.test(lowerText)) {
+      tense = "Future";
+      notes.push("Gelecek zamana isaret eden bir yapi var.");
+    } else if (/\b(have|has|had)\b.+\b\w+ed\b/i.test(lowerText)) {
+      tense = "Perfect";
+      notes.push("Perfect benzeri bir tamamlanmislik yapisi var.");
+    } else if (/\b(am|is|are|was|were)\b.+ing\b/i.test(lowerText)) {
+      tense = "Continuous";
+      notes.push("Suregiden eylem vurgusu var.");
+    } else if (/\b\w+ed\b/.test(lowerText)) {
+      tense = "Past";
+      notes.push("Gecmis zaman izi goruluyor.");
+    } else if (parts.length > 1) {
+      tense = "Present / base";
+      notes.push("Temel simdiki-genis zaman hissi veriyor.");
+    }
+
+    if (/\b(can|could|may|might|must|should|would)\b/i.test(lowerText)) {
+      notes.push("Modal kullanimi var.");
+    }
+
+    if (/\b(and|but|because|if|when|while)\b/i.test(lowerText)) {
+      notes.push("Baglac ile genisleyen bir yapi var.");
+    }
+  }
+
+  if (translatedText && parts.length > 1) {
+    notes.push(`Hedef anlam: ${safeText(translatedText).slice(0, 80)}`);
+  }
+
+  return sanitizeGrammarBreakdown({
+    summary,
+    structure,
+    tense,
+    notes
+  });
+}
+
+function buildContextInsights(text, translatedText, language, details) {
+  const normalizedText = safeText(text);
+  if (!normalizedText) {
+    return [];
+  }
+
+  const insights = [];
+  const lowerText = normalizedText.toLowerCase();
+  const firstMeaning = details?.detailedMeanings?.[0]?.meanings?.[0];
+  const firstDefinition = details?.dictionaryDefinitions?.[0]?.definition;
+
+  if (normalizedText.split(/\s+/).length === 1) {
+    insights.push("Kelime tek basina geliyor; baglam anlam secimini degistirebilir.");
+  } else if (normalizedText.split(/\s+/).length <= 4) {
+    insights.push("Bu ifade buyuk ihtimalle kalip veya baglamsal bir birim olarak okunmali.");
+  } else {
+    insights.push("Cumle seviyesinde ceviri yapildi; zaman ve ton baglamla birlikte okunmali.");
+  }
+
+  if (/\bformal|official|statement\b/i.test(lowerText)) {
+    insights.push("Resmi veya aciklayici bir ton olabilir.");
+  }
+
+  if (/\bhey|wow|oh|uh|gonna|wanna\b/i.test(lowerText)) {
+    insights.push("Gundelik veya konusma dili tonu var.");
+  }
+
+  if (firstMeaning) {
+    insights.push(`En yakin cekirdek anlam: ${firstMeaning}`);
+  } else if (firstDefinition) {
+    insights.push(`Sozluk odagi: ${firstDefinition}`);
+  }
+
+  if (translatedText) {
+    insights.push(`Cevrilen hedef: ${safeText(translatedText).slice(0, 90)}`);
+  }
+
+  if (String(language || "").toLowerCase().startsWith("en")) {
+    insights.push("Ingilizce kaynakta phrase / tense degisimi anlami hizli kaydirabilir.");
+  }
+
+  return insights.map(safeText).filter(Boolean).slice(0, 4);
 }
 
 async function updateBadge(tabId, enabled) {
