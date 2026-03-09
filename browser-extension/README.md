@@ -43,6 +43,8 @@ Kullanicinin uzantiyi acip kapattigi, aktif host bilgisini gordugu ve kayitlara 
 
 ## Kurulum
 
+Bu uzanti icin build adimi yoktur. Gelistirme amacli test haricinde `npm install` gerekmez.
+
 1. Chrome veya Chromium ac
 2. `chrome://extensions` adresine git
 3. `Developer mode` ac
@@ -52,6 +54,8 @@ Kullanicinin uzantiyi acip kapattigi, aktif host bilgisini gordugu ve kayitlara 
 ```text
 browser-extension/
 ```
+
+Normal kullanimda sadece bu klasoru yuklemek yeterlidir.
 
 ## Kullanim
 

@@ -264,7 +264,17 @@ package.json               Yerel gelistirme komutlari
 
 ## Hizli baslangic
 
+### Gereksinimler
+
+Yerel gelistirme ve smoke test icin:
+
+- Node.js 18+
+- npm
+- Chrome veya Chromium
+
 ### Chrome / Chromium
+
+Bu paket icin build adimi yoktur. Kurulum dogrudan `Load unpacked` ile yapilir.
 
 1. `chrome://extensions` ac
 2. `Developer mode` ac
@@ -291,6 +301,17 @@ Sonra herhangi bir sayfada:
 4. Safari > Extensions icinde uzantiyi ac
 
 ## Yerel gelistirme ortami
+
+Ilk kurulum:
+
+```bash
+npm install
+```
+
+Not:
+
+- `npm install` yalnizca yerel test, smoke script ve paketleme icindir
+- Chrome uzantisini normal kullanmak icin `browser-extension/` klasorunu dogrudan yuklemek yeterlidir
 
 Sunucuyu ac:
 
@@ -324,6 +345,23 @@ Bu akista su senaryolar kontrol edilir:
 - pin davranisi
 - player kontrol bariyla cakismama
 - native text track fallback
+
+### Path uyumlulugu
+
+Proje, bosluk ve Turkce karakter iceren bir path altinda ayrica dogrulandi.
+
+Ornek test path'i:
+
+```text
+/tmp/Türkçe Kurulum Doğrulama .../altyazı çeviri çalışma
+```
+
+Bu path altinda su zincir basariyla calistirildi:
+
+- `npm install`
+- `PORT=3017 npm start`
+- `npm run smoke:stability`
+- `./scripts/package_chrome_web_store.sh`
 
 ### Real site smoke
 

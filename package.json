@@ -7,5 +7,8 @@
     "start": "node server.js",
     "smoke:stability": "node scripts/run_stability_smoke.js",
     "smoke:real": "node scripts/run_real_site_smoke.js"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.52.0"
   }
 }
