@@ -1,111 +1,459 @@
-# Altyazi Ustunde Ceviri Tool
+# Subtitle Hover Translator
 
-Bu repo, video sitelerindeki altyazi overlay'lerinde ve normal web sayfalarindaki gorunur metinde calisan ceviri aracinin uc paketini icerir:
+`Subtitle Hover Translator`, video sitelerindeki altyazi overlay'lerinde ve normal web sayfalarindaki gorunur metinde calisan bir ceviri yardimcisidir.
 
-- `browser-extension/`: Chrome ve Chromium uzantisi
+Ana hedef:
+
+- kelimenin ustune gelince aninda ceviri gostermek
+- 2-3 kelime ya da tumce secilince toplu ceviri vermek
+- bilinmeyen kelimeyi veya ifadeyi tek adimda kaydetmek
+- ogrenme akisina donusturmek
+
+Bu repo tek bir paketten ibaret degil. Ayni cekirdegin 3 farkli dagitimini icerir:
+
+- `browser-extension/`: Chrome ve Chromium tabanli tarayicilar icin ana uzanti
 - `safari-extension/`: iPhone ve iPad icin Safari Web Extension Xcode projesi
-- `safari-extension-macos/`: macOS icin Safari Web Extension Xcode projesi
+- `safari-extension-macos/`: macOS Safari icin Safari Web Extension Xcode projesi
 
-Yerel gelistirme ve fixture dosyalari da ayrica repoda tutulur:
+Ek olarak repoda yerel test sunucusu, fixture sayfalari, smoke test script'leri ve paketleme araclari da bulunur.
 
-- `server.js`
-- `public/`
-- `data/unknown-words.json`
+## Ne saglar
 
-## Hedef
+Bu proje su anda asagidaki davranislari destekler:
 
-Video sitelerindeki altyazi metni ve normal web metni ustunde:
+- kelime hover cevirisi
+- 2-3 kelimelik drag selection cevirisi
+- altyazi ve normal web metni icin ayri davranis
+- phrase / idiom tespiti
+- detayli anlam, synonym, word formation ve source dictionary bilgisi
+- example mode
+- `S` ile quick save
+- `P` ile pin
+- `Esc` ile kapatma
+- bilinmeyenler listesi
+- mini review modu
+- Anki TSV ve CSV export
+- site profilleri
+- Safari iOS ve Safari macOS paketleri
 
-- kelime icin anlik ceviri
-- secili satir veya cumle icin toplu ceviri
-- bilinmeyen kelime veya cumleyi anlamiyla kaydetme
-- video sitelerinde player kontrollerini gereksiz yere tetiklemeden hover etme
+## Kisa urun ozeti
 
-## Calisma kapsami
+Kullanim mantigi su:
 
-- Tum normal web siteleri icin genel metin modu
-- YouTube, Netflix, Prime Video, Disney+, Max, Udemy ve Twitch icin odak video overlay modu
+1. Kullanici video ya da normal web sayfasi acar.
+2. Uzanti sayfadaki okunabilir metni bulur.
+3. Video varsa once altyazi selector'larini ve video overlay fallback'lerini dener.
+4. Kullanici kelimenin ustune gelir veya bir ifade secer.
+5. Tooltip acilir.
+6. Isterse kaydeder, sabitler, review'a ekler veya disa aktarir.
 
-Bilinen subtitle selector'lari once denenir. Eslesme olmazsa, oynatilan video civarindaki gorunur altyazi benzeri DOM icin fallback kullanilir. Video olmayan sayfalarda ise genel web metni heuristics'i devreye girer.
+Bu yuzden urun yalnizca "ceviri popup'i" degil, ayni zamanda hafif bir dil ogrenme yardimcisidir.
 
-## Chrome veya Chromium kurulumu
+## Paketler
+
+### 1. Chrome / Chromium uzantisi
+
+Ana calisan urun budur.
+
+Klasor:
+
+```text
+browser-extension/
+```
+
+Bu paket:
+
+- tum normal web sayfalarinda genel metin modunda calisir
+- video sitelerinde altyaziya odakli davranis kullanir
+- popup icinden ayarlanir
+- review ve export ozelliklerini icerir
+
+Detayli teknik ve kullanim notlari:
+
+- [browser-extension/README.md](browser-extension/README.md)
+
+### 2. iPhone / iPad Safari paketi
+
+Klasor:
+
+```text
+safari-extension/
+```
+
+Bu paket, Chrome uzantisinin cekirdegini Safari Web Extension formatina tasir.
+
+Detayli kurulum:
+
+- [safari-extension/README.md](safari-extension/README.md)
+
+### 3. macOS Safari paketi
+
+Klasor:
+
+```text
+safari-extension-macos/
+```
+
+Bu paket, ayni davranisi macOS Safari tarafina tasir.
+
+Detayli kurulum:
+
+- [safari-extension-macos/README.md](safari-extension-macos/README.md)
+
+## Ozellikler
+
+### Kelime hover
+
+- kelimenin ustune gelince tooltip acar
+- secilemeyen subtitle overlay'lerde de calismasi icin DOM + rect + fallback mantigi kullanir
+- video player kontrol barini gereksiz yere tetiklememeye calisir
+
+### Selection cevirisi
+
+- normal text selection varsa onu kullanir
+- subtitle overlay secilemiyorsa custom drag selection fallback'i kullanir
+- 2-3 kelime ve daha uzun secimlerde toplu ceviri verir
+
+### Phrase / idiom tespiti
+
+Tek kelimeye bakmakla yetinmez. Uygunsa:
+
+- phrase
+- phrasal verb
+- idiom
+- baglamsal ifade
+
+olarak daha buyuk parcayi da yakalamaya calisir.
+
+### Detayli tooltip
+
+Tek kelimelik tooltip'te su bolumler bulunabilir:
+
+- temel ceviri
+- detayli anlam
+- synonym listesi
+- word formation
+- source dictionary aciklamasi
+- examples
+- phrase / idiom sonucu
+
+### Pin ve quick save
+
+Tooltip acikken:
+
+- `S`: kaydet
+- `P`: sabitle
+- `Esc`: kapat
+
+Pin davranisi ozellikle video sitelerinde kartin hemen kaybolmamasini saglamak icin eklendi.
+
+### Ogrenme akislar
+
+Popup icinde:
+
+- bilinmeyenler listesi
+- mini review
+- tekrar / zor / bildim akisi
+- Anki TSV export
+- CSV export
+
+bulunur.
+
+### Site profilleri
+
+Video siteleri icin ayri davranis saklanabilir:
+
+- hover gecikmesi
+- tooltip yerlesimi
+- tooltip boyutu
+
+Bu sayede YouTube, Max ya da baska bir sitede farkli his verecek ayarlar tutulabilir.
+
+## Desteklenen modlar
+
+### Video modu
+
+Oncelikli odak siteler:
+
+- YouTube
+- Netflix
+- Prime Video
+- Disney+
+- Max
+- Udemy
+- Twitch
+
+Bu sitelerde once bilinen subtitle selector'lari denenir. Eslesme yoksa video civarinda gorunur subtitle overlay fallback'i calisir.
+
+### Web modu
+
+Video olmayan sayfalarda:
+
+- paragraf
+- baslik
+- liste
+- kisa metin bloklari
+- article / main icerigi
+
+uzerinde genel hover cevirisi yapilir.
+
+### Deep DOM modu
+
+Uzanti yalnizca basit DOM'da calismaz. Ek olarak:
+
+- `iframe`
+- `srcdoc`
+- acik `shadow DOM`
+
+icinde de text bulmaya calisir.
+
+## Mimari
+
+Projede 3 ana JavaScript parcasi vardir.
+
+### `content.js`
+
+Sayfanin icinde calisir.
+
+Sorumluluklari:
+
+- hover ve selection dinleme
+- altyazi / web metni tespiti
+- tooltip cizimi
+- pin davranisi
+- player kontrol bariyla cakismayi azaltma
+- scroll, drag ve interaction mantigi
+
+### `background.js`
+
+Arka plan islerini yonetir.
+
+Sorumluluklari:
+
+- ceviri istegi
+- settings saklama
+- bilinmeyenler listesi
+- review state
+- export verisi hazirlama
+- site profili ayarlari
+
+### `popup.*`
+
+Kullanicinin gordugu uzanti arayuzudur.
+
+Sorumluluklari:
+
+- aktif sekme durumu
+- dil ayarlari
+- site profili ayarlari
+- review paneli
+- Anki / CSV export
+- bilinmeyenler listesi
+
+## Repo yapisi
+
+```text
+browser-extension/         Chrome ve Chromium uzantisi
+safari-extension/          iPhone ve iPad Safari Xcode projesi
+safari-extension-macos/    macOS Safari Xcode projesi
+public/                    Yerel fixture ve test sayfalari
+scripts/                   Paketleme, otomasyon ve smoke test script'leri
+server.js                  Yerel test sunucusu
+package.json               Yerel gelistirme komutlari
+```
+
+## Hizli baslangic
+
+### Chrome / Chromium
 
 1. `chrome://extensions` ac
 2. `Developer mode` ac
 3. `Load unpacked` sec
 4. `browser-extension/` klasorunu yukle
 
-Detaylar:
+Sonra herhangi bir sayfada:
 
-- [browser-extension/README.md](/Users/yasinkaya/Library/Mobile%20Documents/com~apple~Keynote/Documents/k%C4%B1z%C4%B1l%20o%CC%88tesi%20ve%20normal%20go%CC%88ru%CC%88ntu%CC%88%20is%CC%A7leme/altayz%C4%B1%20tool/browser-extension/README.md)
+- kelimenin ustune gel
+- ya da 2-3 kelime sec
 
-## iPhone ve iPad Safari kurulumu
+### iPhone / iPad Safari
 
-1. Xcode ile [Subtitle Hover Translator.xcodeproj](/Users/yasinkaya/Library/Mobile%20Documents/com~apple~Keynote/Documents/k%C4%B1z%C4%B1l%20o%CC%88tesi%20ve%20normal%20go%CC%88ru%CC%88ntu%CC%88%20is%CC%A7leme/altayz%C4%B1%20tool/safari-extension/Subtitle%20Hover%20Translator/Subtitle%20Hover%20Translator.xcodeproj) projesini ac
-2. Kendi `Team` bilginizi sec
-3. `Subtitle Hover Translator` uygulama target'ini iPhone, iPad veya simulator icin calistir
-4. iPhone veya iPad'de Safari uzantilarini acip `Subtitle Hover Translator` uzantisini etkinlestir
-5. Safari icinde video overlay veya normal web metni ustunde kullan
+1. Xcode ile `safari-extension/Subtitle Hover Translator/Subtitle Hover Translator.xcodeproj` ac
+2. `Signing & Capabilities` altinda kendi `Team` bilgisini sec
+3. `Subtitle Hover Translator` target'ini cihaza veya simulator'e calistir
+4. iPhone / iPad'de Safari uzantisini etkinlestir
 
-Detaylar:
+### macOS Safari
 
-- [safari-extension/README.md](/Users/yasinkaya/Library/Mobile%20Documents/com~apple~Keynote/Documents/k%C4%B1z%C4%B1l%20o%CC%88tesi%20ve%20normal%20go%CC%88ru%CC%88ntu%CC%88%20is%CC%A7leme/altayz%C4%B1%20tool/safari-extension/README.md)
+1. Xcode ile `safari-extension-macos/Subtitle Hover Translator for Mac/Subtitle Hover Translator for Mac.xcodeproj` ac
+2. `Signing & Capabilities` altinda kendi `Team` bilgisini sec
+3. `Subtitle Hover Translator for Mac` target'ini calistir
+4. Safari > Extensions icinde uzantiyi ac
 
-Simulator'da Safari > Uzantilar adimini otomatiklestirmek icin:
+## Yerel gelistirme ortami
 
-```bash
-./scripts/run_ios_extension_automation.sh
-```
-
-Bu komut simulator'u boot eder, iOS Safari paketini temiz kurar ve XCUITest ile `Settings > Apps > Safari > Extensions > Subtitle Hover Translator` akisini tamamlayip uzantiyi acmaya calisir.
-Isterseniz hedef simulator adini arguman olarak verip iPad icin de calistirabilirsiniz: `./scripts/run_ios_extension_automation.sh 'iPad (A16)'`.
-
-## macOS Safari kurulumu
-
-1. Xcode ile [Subtitle Hover Translator for Mac.xcodeproj](/Users/yasinkaya/Library/Mobile%20Documents/com~apple~Keynote/Documents/k%C4%B1z%C4%B1l%20o%CC%88tesi%20ve%20normal%20go%CC%88ru%CC%88ntu%CC%88%20is%CC%A7leme/altayz%C4%B1%20tool/safari-extension-macos/Subtitle%20Hover%20Translator%20for%20Mac/Subtitle%20Hover%20Translator%20for%20Mac.xcodeproj) projesini ac
-2. Kendi `Team` bilginizi sec
-3. `Subtitle Hover Translator for Mac` uygulama target'ini calistir
-4. Safari Settings > Extensions icinde uzantiyi etkinlestir
-5. Safari icinde video overlay veya normal web metni ustunde kullan
-
-Detaylar:
-
-- [safari-extension-macos/README.md](/Users/yasinkaya/Library/Mobile%20Documents/com~apple~Keynote/Documents/k%C4%B1z%C4%B1l%20o%CC%88tesi%20ve%20normal%20go%CC%88ru%CC%88ntu%CC%88%20is%CC%A7leme/altayz%C4%B1%20tool/safari-extension-macos/README.md)
-
-macOS'ta Safari etkinlestirme adimini otomatiklestirmek icin:
-
-```bash
-./scripts/run_macos_extension_automation.sh
-```
-
-Bu komut macOS Safari projesini derler, `pluginkit` uzerinden uzantiyi `use` durumuna alir, container app ile Safari ayar penceresini acar ve GUI scripting izni varsa uzanti checkbox'ini tiklamaya calisir.
-Gerekirse `Mac Development` hatasini atlatmak icin unsigned build + local `Apple Development` codesign fallback'i kullanir.
-
-## Yerel test ortami
+Sunucuyu ac:
 
 ```bash
 npm start
 ```
 
-Sonra:
+Varsayilan test adresleri:
 
 - `http://localhost:3000`
 - `http://localhost:3000/mock-video-sites.html?shtSite=youtube`
+- `http://localhost:3000/mock-video-sites.html?shtSite=max`
+- `http://localhost:3000/mock-video-sites.html?shtSite=native`
 - `http://localhost:3000/mock-generic-site.html`
+- `http://localhost:3000/mock-everywhere.html`
 
-Ikinci adres, YouTube benzeri caption DOM fixture'i verir. Ucuncu adres genel web metni hover ve secim akisini test etmek icin kullanilir.
+## Test ve dogrulama
 
-## Dogrulanan durum
+Repoda iki ana smoke test vardir.
 
-- Chrome uzantisi yukleniyor
-- destekli video host profili algilaniyor
-- normal web sayfasinda genel metin modu acilabiliyor
-- hover cevirisi geliyor
-- selection cevirisi geliyor
-- bilinmeyen kaydi storage'a yaziliyor
-- iOS Safari Xcode projesi simulator icin derleniyor
-- iOS container app simulator'da kurulup aciliyor
-- iOS simulator'da Safari uzantisi XCUITest ile etkinlestiriliyor
-- macOS Safari Xcode projesi derleniyor
-- macOS container app aciliyor
-- macOS uzantisi `pluginkit` uzerinden `+ use` durumuna alinabiliyor
+### Stability smoke
+
+```bash
+npm run smoke:stability
+```
+
+Bu akista su senaryolar kontrol edilir:
+
+- generic hover
+- video subtitle hover
+- pin davranisi
+- player kontrol bariyla cakismama
+- native text track fallback
+
+### Real site smoke
+
+```bash
+npm run smoke:real
+```
+
+Bu akista acik erisilebilir gercek sitelerde temel hover akisi kontrol edilir.
+
+Not:
+
+- bu test gercek login gerektiren playback ekranlarini garanti etmez
+- daha cok acik web yuzeylerinde regresyon yakalamak icindir
+
+## Otomasyon script'leri
+
+### iOS Safari etkinlestirme
+
+```bash
+./scripts/run_ios_extension_automation.sh
+```
+
+Ne yapar:
+
+- simulator boot eder
+- app'i kurar
+- Safari extension etkinlestirme akisina girer
+- XCUITest ile ayar ekranlarini gezer
+
+### macOS Safari etkinlestirme
+
+```bash
+./scripts/run_macos_extension_automation.sh
+```
+
+Ne yapar:
+
+- macOS Safari projesini derler
+- gerekirse local signing fallback uygular
+- Safari extension ayarlarina yonlendirir
+- GUI automation ile etkinlestirmeye yardim eder
+
+### Chrome Web Store paketi
+
+```bash
+./scripts/package_chrome_web_store.sh
+```
+
+Bu script Chrome Web Store icin zip paketini hazirlar.
+
+### Paylasim paketleri
+
+```bash
+./scripts/package_share_builds.sh
+```
+
+Bu script arkadaslarla paylasmak icin cikti paketleri uretir.
+
+## Kullanim akisi
+
+Gundelik kullanimda kullanicidan beklenen sey su:
+
+1. Sayfayi ac
+2. Kelimeye hover yap
+3. Gerekiyorsa 2-3 kelime sec
+4. Tooltip'ten anlami oku
+5. `S` ile kaydet
+6. Popup'tan review yap
+7. Istiyorsa Anki ya da CSV olarak disa aktar
+
+## Gizlilik ve veri saklama
+
+Mevcut tasarim mantigi:
+
+- kaydedilen bilinmeyenler local storage icinde tutulur
+- popup review ve export bunun ustunden calisir
+- ceviri icin ag uzerinden istek yapilir
+
+Bu yuzden repo yayinlanacaksa:
+
+- privacy policy
+- store metadata
+- veri isleme beyanlari
+
+ayri ve net sekilde hazir tutulmalidir.
+
+## Bilinen sinirlar
+
+Proje guclu bir beta seviyesindedir; ancak su sinirlar halen gecerli:
+
+- `chrome://` gibi korumali sayfalarda calismaz
+- kapali `shadow DOM` icindeki metin her zaman yakalanmaz
+- canvas / OCR gerektiren subtitle yuzeyleri her zaman DOM tabanli okunamaz
+- login gerektiren gercek playback ekranlarinda siteye ozel tuning ihtiyaci olabilir
+- Safari tarafi kurulum ve izin modeli nedeniyle Chrome kadar rahat degildir
+- sistem geneli overlay degildir; tarayici uzantisi mantiginda calisir
+
+## Ne degil
+
+Bu proje:
+
+- masaustu genel overlay degil
+- VLC / mpv eklentisi degil
+- iOS'ta tum uygulamalarin ustunde calisan sistem araci degil
+
+Tarayici icindeki gorunur web metni ve subtitle overlay odagina sahip bir urundur.
+
+## Su anki kalite seviyesi
+
+Pratik degerlendirme:
+
+- demo icin uygun
+- paylasim icin uygun
+- Chrome tarafinda beta yayin seviyesine yakin
+- her sitede kusursuz, hic ayar istemeyen nihai urun seviyesinde degil
+
+Bir sonraki buyuk kalite adimlari genelde sunlar olur:
+
+- OCR fallback
+- docked panel
+- daha guclu review sistemi
+- bulut senkron
+
+## Hangi README'yi ne zaman okuyayim
+
+- once bu dosya: urunun genel resmi
+- sonra [browser-extension/README.md](browser-extension/README.md): Chrome uzantisi detayi
+- iOS gerekiyorsa [safari-extension/README.md](safari-extension/README.md)
+- macOS Safari gerekiyorsa [safari-extension-macos/README.md](safari-extension-macos/README.md)
+
+## Son not
+
+Bu repo tek seferlik bir deneme degil; hem urun hem de test altyapisi beraber tutuluyor. O yuzden yeni ozellik eklerken yalnizca `browser-extension/` degil, gerekiyorsa Safari kopyalari ve smoke test script'leri de birlikte guncellenmelidir.
