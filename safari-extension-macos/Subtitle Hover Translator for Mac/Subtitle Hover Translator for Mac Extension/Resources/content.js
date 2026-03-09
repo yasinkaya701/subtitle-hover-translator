@@ -323,8 +323,15 @@ function setDocumentDebugState(status) {
   document.documentElement.dataset.shtState = status;
 }
 
+function canHandleTextInteractions() {
+  return Boolean(
+    state.enabled &&
+    (state.pageContext?.isVideoPage || state.pageContext?.allowGenericText)
+  );
+}
+
 function handleMouseMove(event) {
-  if (!state.enabled || !state.pageContext?.isVideoPage) {
+  if (!canHandleTextInteractions()) {
     return;
   }
 
@@ -448,7 +455,7 @@ function handleMouseUp(event) {
     consumePointerEvent(event, { preventDefault: true });
   }
 
-  if (!state.enabled || !state.pageContext?.isVideoPage) {
+  if (!canHandleTextInteractions()) {
     resetDragSelection();
     return;
   }
@@ -501,7 +508,7 @@ function handleSelectionChange() {
     return;
   }
 
-  if (!state.enabled || !state.pageContext?.isVideoPage) {
+  if (!canHandleTextInteractions()) {
     return;
   }
 
@@ -569,7 +576,7 @@ function handleDocumentMouseDown(event) {
   state.lastHoverKey = "";
   state.lastPointerSample = null;
 
-  if (!state.enabled || !state.pageContext?.isVideoPage) {
+  if (!canHandleTextInteractions()) {
     return;
   }
 
@@ -591,7 +598,7 @@ function handleDocumentMouseDown(event) {
 }
 
 function handleDocumentClick(event) {
-  if (!state.enabled || !state.pageContext?.isVideoPage) {
+  if (!canHandleTextInteractions()) {
     return;
   }
 
@@ -679,7 +686,7 @@ function resetDragSelection() {
 }
 
 function handleTouchStart(event) {
-  if (!state.enabled || !state.pageContext?.isVideoPage) {
+  if (!canHandleTextInteractions()) {
     resetTouchSelection();
     return;
   }
@@ -757,7 +764,7 @@ function handleTouchEnd(event) {
   const touch = event.changedTouches[0];
   resetTouchSelection();
 
-  if (!state.enabled || !state.pageContext?.isVideoPage || !snapshot.active || !touch) {
+  if (!canHandleTextInteractions() || !snapshot.active || !touch) {
     return;
   }
 
@@ -4174,9 +4181,7 @@ function detectPageContext() {
   const allowGenericText = hasReadableTextSurface();
   const profileSelectorsMatched = hasProfileSubtitleSelectors(siteProfile);
   const pageMode = hasVisibleVideo || (supportedHost && pathMatched) ? "video" : "web";
-  const isVideoPage = Boolean(
-    hasVisibleVideo || (supportedHost && pathMatched) || allowGenericText
-  );
+  const isVideoPage = Boolean(hasVisibleVideo || (supportedHost && pathMatched));
 
   return {
     hostname,
