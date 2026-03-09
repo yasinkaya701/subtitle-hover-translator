@@ -1,0 +1,21 @@
+.DS_Store
+.playwright-cli/
+node_modules/
+output/
+backups/
+data/
+
+# Xcode and local Apple build products
+build/
+DerivedData/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# Local env and logs
+*.log
+.env
+.env.*
+
+# macOS clutter
+._*

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mock Generic Site</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: Georgia, "Times New Roman", serif;
+        background:
+          radial-gradient(circle at top left, rgba(250, 214, 173, 0.45), transparent 32%),
+          linear-gradient(180deg, #f8f1e8, #efe4d8 52%, #f8f4ef);
+        color: #2b1d14;
+      }
+
+      .shell {
+        width: min(920px, calc(100vw - 40px));
+        margin: 0 auto;
+        padding: 64px 0 96px;
+      }
+
+      .hero {
+        display: grid;
+        gap: 14px;
+        margin-bottom: 28px;
+      }
+
+      .eyebrow {
+        margin: 0;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        font-size: 12px;
+        color: #87593c;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(38px, 7vw, 72px);
+        line-height: 0.95;
+      }
+
+      .lead,
+      .story {
+        font-size: 22px;
+        line-height: 1.7;
+      }
+
+      .story {
+        max-width: 720px;
+      }
+
+      .floating-quote {
+        display: inline-block;
+        margin: 28px 0;
+        padding: 14px 18px;
+        border-radius: 18px;
+        background: rgba(86, 57, 37, 0.08);
+        box-shadow: 0 20px 40px rgba(72, 38, 16, 0.08);
+        pointer-events: none;
+        user-select: none;
+      }
+
+      .floating-quote span {
+        display: inline-block;
+        margin-right: 8px;
+        font-size: 28px;
+        line-height: 1.35;
+      }
+
+      .grid {
+        display: grid;
+        gap: 18px;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        margin-top: 36px;
+      }
+
+      .card {
+        padding: 20px;
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.58);
+        box-shadow: 0 16px 30px rgba(41, 19, 7, 0.08);
+      }
+
+      .card h2 {
+        margin-top: 0;
+        font-size: 18px;
+      }
+
+      .card p {
+        margin-bottom: 0;
+        font-size: 17px;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Generic text fixture</p>
+        <h1>Hover directly over any visible word.</h1>
+        <p class="lead">
+          This page exists to verify that the extension can translate ordinary website
+          copy without requiring a clickable subtitle layer.
+        </p>
+      </section>
+
+      <p class="story">
+        Quiet interfaces feel faster because nothing interrupts the eye. When the pointer
+        passes over a difficult word, the translation should appear softly and stay out of
+        the reader's way.
+      </p>
+
+      <div class="floating-quote" aria-hidden="true">
+        <span>Subtle</span>
+        <span>hover</span>
+        <span>translation</span>
+        <span>should</span>
+        <span>still</span>
+        <span>work.</span>
+      </div>
+
+      <section class="grid">
+        <article class="card">
+          <h2>Selection test</h2>
+          <p>
+            Drag across two or three words in this sentence and the extension should treat
+            the phrase as a translation request.
+          </p>
+        </article>
+        <article class="card">
+          <h2>Glossary test</h2>
+          <p>
+            Vocabulary cards should include synonyms, dictionary definitions, and word
+            formation details when the hovered text is a single word.
+          </p>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

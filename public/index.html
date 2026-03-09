@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Altyazi Kelime Yardimcisi</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Yerel MVP</p>
+          <h1>Altyazida ustune gel, sec, cevir ve kaydet.</h1>
+          <p class="intro">
+            Kelimenin ustune gelince anlik anlamini gor. Cumleyi ya da tum altyaziyi
+            secince tamamini cevirt. Bilinmeyenleri tek tikla kaydet.
+          </p>
+        </div>
+        <div class="config-card">
+          <label>
+            Kaynak dil
+            <select id="source-language">
+              <option value="auto">Otomatik</option>
+              <option value="en" selected>Ingilizce</option>
+              <option value="de">Almanca</option>
+              <option value="fr">Fransizca</option>
+              <option value="es">Ispanyolca</option>
+            </select>
+          </label>
+          <label>
+            Hedef dil
+            <select id="target-language">
+              <option value="tr" selected>Turkce</option>
+              <option value="en">Ingilizce</option>
+              <option value="de">Almanca</option>
+            </select>
+          </label>
+          <button id="render-button" class="primary-button">Altyaziyi isle</button>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel player-panel">
+          <div class="panel-header">
+            <h2>Film ve canli altyazi</h2>
+            <label class="file-upload">
+              <input id="video-file" type="file" accept="video/*" />
+              Video yukle
+            </label>
+          </div>
+          <div class="video-shell">
+            <video id="video-player" controls preload="metadata"></video>
+            <div id="live-subtitle" class="live-subtitle empty-state">
+              Video ve zamanli altyazi yuklediginde aktif satir burada gorunur.
+            </div>
+          </div>
+        </section>
+
+        <section class="panel input-panel">
+          <div class="panel-header">
+            <h2>Altyazi girisi</h2>
+            <label class="file-upload">
+              <input id="subtitle-file" type="file" accept=".srt,.txt,.vtt" />
+              Dosya yukle
+            </label>
+          </div>
+          <textarea
+            id="subtitle-input"
+            spellcheck="false"
+            placeholder="Buraya altyazi satirlarini yapistirin veya .srt dosyasi yukleyin."
+          >I can't believe this actually worked.
+Maybe we should keep moving before they notice.</textarea>
+          <p class="helper-text">
+            Ipucu: Kelime hover davranisi alt bolumde calisir. Metnin bir kismini secerseniz
+            aninda cumle cevirisi alirsiniz.
+          </p>
+        </section>
+
+        <section class="panel subtitle-panel">
+          <div class="panel-header">
+            <h2>Tam altyazi metni</h2>
+            <span id="status-pill" class="status-pill">Hazir</span>
+          </div>
+          <div id="subtitle-stage" class="subtitle-stage" aria-live="polite"></div>
+        </section>
+
+        <aside class="sidebar">
+          <section class="panel translation-panel">
+            <div class="panel-header">
+              <h2>Anlik ceviri</h2>
+            </div>
+            <div id="translation-output" class="translation-output empty-state">
+              Bir kelimenin ustune gelin veya metin secin.
+            </div>
+          </section>
+
+          <section class="panel words-panel">
+            <div class="panel-header">
+              <h2>Bilinmeyenler</h2>
+            </div>
+            <div id="unknown-words-list" class="unknown-words-list empty-state">
+              Henuz kayit yok.
+            </div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <div id="hover-card" class="hover-card hidden" role="dialog" aria-live="polite">
+      <div id="hover-card-content"></div>
+      <button id="save-hovered-word" class="ghost-button" type="button">
+        Bilinmiyor olarak kaydet
+      </button>
+    </div>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

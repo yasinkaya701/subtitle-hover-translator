@@ -1,0 +1,11 @@
+{
+  "name": "subtitle-hover-translator",
+  "version": "1.0.0",
+  "description": "Interactive subtitle translator for unknown words and sentence selections.",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "smoke:stability": "node scripts/run_stability_smoke.js",
+    "smoke:real": "node scripts/run_real_site_smoke.js"
+  }
+}

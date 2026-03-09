@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mock Video Sites</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #111;
+        color: #fff;
+        font-family: Arial, sans-serif;
+      }
+
+      .shell {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 32px 16px;
+      }
+
+      .player {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        background: linear-gradient(180deg, #232323, #090909);
+        border-radius: 18px;
+        overflow: hidden;
+      }
+
+      video {
+        width: 100%;
+        height: 100%;
+        background: #000;
+      }
+
+      .mock-controls {
+        position: absolute;
+        left: 18px;
+        right: 18px;
+        bottom: 18px;
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: linear-gradient(180deg, rgba(9, 9, 9, 0.2), rgba(9, 9, 9, 0.78));
+        opacity: 0;
+        transform: translateY(8px);
+        transition: opacity 160ms ease, transform 160ms ease;
+        pointer-events: none;
+      }
+
+      .mock-controls.visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .mock-controls span {
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+        font-size: 14px;
+      }
+
+      .caption-demo {
+        position: absolute;
+        left: 50%;
+        bottom: 8%;
+        transform: translateX(-50%);
+        width: min(80%, 760px);
+        text-align: center;
+        font-size: 28px;
+        line-height: 1.45;
+        text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9);
+        pointer-events: none;
+        user-select: none;
+      }
+
+      .caption-box {
+        background: rgba(0, 0, 0, 0.34);
+        border-radius: 12px;
+        padding: 8px 14px;
+        display: inline-block;
+      }
+
+      .caption-word {
+        display: inline-block;
+      }
+
+      .max-floating-copy {
+        position: absolute;
+        left: 50%;
+        bottom: 11%;
+        transform: translateX(-50%);
+        width: min(76%, 720px);
+        text-align: center;
+        font-size: 28px;
+        line-height: 1.45;
+        text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9);
+        pointer-events: none;
+        user-select: none;
+      }
+
+      .max-copy-surface {
+        display: inline-block;
+        padding: 10px 16px;
+        border-radius: 14px;
+        background: rgba(6, 6, 6, 0.5);
+      }
+
+      .notes {
+        margin-top: 18px;
+        color: #bbb;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="player">
+        <video muted id="mock-video"></video>
+        <div class="mock-controls" id="mock-controls">
+          <span>Durdur</span>
+          <span>10 sn</span>
+          <span>Altyazi</span>
+        </div>
+        <div id="caption-root"></div>
+      </div>
+      <p class="notes">
+        Bu fixture hem selector tabanli hem fallback tabanli senaryolari taklit eder. YouTube icin
+        <code>?shtSite=youtube</code>, Max benzeri stale selector + kontrol overlay senaryosu icin
+        <code>?shtSite=max</code>, native text track fallback'i icin
+        <code>?shtSite=native</code> ekleyin.
+      </p>
+    </div>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const site = params.get("shtSite") || "youtube";
+      const captionRoot = document.getElementById("caption-root");
+      const controls = document.getElementById("mock-controls");
+      const video = document.getElementById("mock-video");
+      let controlsTimeoutId = null;
+      let controlsHits = 0;
+      let captionVersion = 0;
+
+      const words = {
+        youtube: ["This", "is", "a", "YouTube", "style", "subtitle", "line."],
+        max: ["HBO", "Max", "style", "subtitle", "should", "work", "without", "clicking."],
+        native: ["Native", "track", "subtitle", "should", "still", "translate."]
+      };
+
+      const nativeTrack = video.addTextTrack("captions", "Mock Native", "en");
+      nativeTrack.mode = "showing";
+
+      const nativeCueState = {
+        text: words.native.join(" ")
+      };
+
+      function setNativeCueText(text) {
+        nativeCueState.text = text;
+
+        if (nativeTrack.cues) {
+          while (nativeTrack.cues.length) {
+            nativeTrack.removeCue(nativeTrack.cues[0]);
+          }
+        }
+
+        if (typeof VTTCue === "function") {
+          nativeTrack.addCue(new VTTCue(0, 1000, text));
+        }
+      }
+
+      setNativeCueText(nativeCueState.text);
+
+      function renderCaption() {
+        captionVersion += 1;
+
+        if (site === "max") {
+          captionRoot.innerHTML = `
+            <div class="max-floating-copy" data-role="floating-copy" data-version="${captionVersion}">
+              <div class="max-copy-surface">
+                ${words.max.map((word) => `<span class="caption-word">${word}</span>`).join(" ")}
+              </div>
+            </div>
+          `;
+          return;
+        }
+
+        if (site === "native") {
+          captionRoot.innerHTML = "";
+          return;
+        }
+
+        captionRoot.innerHTML = `
+          <div class="caption-demo ytp-caption-window-container" data-version="${captionVersion}">
+            <div class="caption-box">
+              <span class="ytp-caption-segment">
+                ${words.youtube.map((word) => `<span class="caption-word">${word}</span>`).join(" ")}
+              </span>
+            </div>
+          </div>
+        `;
+      }
+
+      renderCaption();
+
+      document.querySelector(".player").addEventListener("mousemove", () => {
+        controlsHits += 1;
+        controls.classList.add("visible");
+        clearTimeout(controlsTimeoutId);
+        controlsTimeoutId = setTimeout(() => {
+          controls.classList.remove("visible");
+          if (site === "max") {
+            renderCaption();
+          }
+          if (site === "native") {
+            setNativeCueText("Native track subtitle should remain stable.");
+          }
+        }, 900);
+      });
+
+      window.getMockPlayerState = () => ({
+        site,
+        controlsHits,
+        controlsVisible: controls.classList.contains("visible"),
+        captionVersion,
+        nativeCueText: nativeCueState.text
+      });
+    </script>
+  </body>
+</html>
