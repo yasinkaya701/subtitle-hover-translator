@@ -25,6 +25,8 @@ const LOOSE_TEXT_MAX_CHARS = 640;
 const SUBTITLE_HISTORY_POLL_MS = 900;
 const OCR_SNAPSHOT_TTL_MS = 1400;
 const OCR_TRACK_WORD_DISTANCE_PX = 36;
+const OCR_FAILURE_SUSPEND_MS = 15_000;
+const RUNTIME_MESSAGE_TIMEOUT_MS = 9_000;
 const extensionApi = globalThis.browser || globalThis.chrome;
 const usesPromiseMessagingApi =
   typeof globalThis.browser !== "undefined" && extensionApi === globalThis.browser;
@@ -166,6 +168,10 @@ const state = {
     syncWordPool: false,
     siteProfiles: {}
   },
+  capabilities: {
+    ocrCaptureSupported: true,
+    syncStorageSupported: false
+  },
   pageContext: null,
   tooltip: null,
   cache: new Map(),
@@ -220,6 +226,11 @@ const state = {
     snapshot: null,
     pending: null
   },
+  ocrSupport: {
+    permanentlyUnavailable: false,
+    suspendedUntil: 0,
+    reason: ""
+  },
   nextTooltipRequestId: 0,
   activeTooltipRequestId: 0
 };
@@ -235,6 +246,7 @@ function init() {
     .then((response) => {
       state.enabled = Boolean(response.state.enabled);
       state.settings = response.state.settings;
+      state.capabilities = normalizeRuntimeCapabilities(response.state.capabilities);
       setDocumentDebugState("ready");
     })
     .catch(() => {
@@ -253,6 +265,9 @@ function init() {
 
     if (message.type === "SETTINGS_UPDATED") {
       state.settings = message.settings;
+      if (message.capabilities) {
+        state.capabilities = normalizeRuntimeCapabilities(message.capabilities);
+      }
       state.cache.clear();
       state.pendingTranslationCache.clear();
       state.activeCueCache = {
@@ -328,6 +343,13 @@ function canHandleTextInteractions() {
     state.enabled &&
     (state.pageContext?.isVideoPage || state.pageContext?.allowGenericText)
   );
+}
+
+function normalizeRuntimeCapabilities(value) {
+  return {
+    ocrCaptureSupported: value?.ocrCaptureSupported !== false,
+    syncStorageSupported: Boolean(value?.syncStorageSupported)
+  };
 }
 
 function handleMouseMove(event) {
@@ -914,7 +936,7 @@ async function getHoveredWordWithFallback(clientX, clientY, options = {}) {
     return directMatch;
   }
 
-  if (!state.pageContext?.hasVisibleVideo || !getActiveSiteBehavior().ocrEnabled) {
+  if (!canUseOcrFallback()) {
     return null;
   }
 
@@ -974,10 +996,7 @@ async function getOcrWordAtPoint(clientX, clientY, options = {}) {
 }
 
 async function getOcrSubtitleSnapshot() {
-  if (
-    typeof globalThis.TextDetector === "undefined" ||
-    typeof globalThis.createImageBitmap !== "function"
-  ) {
+  if (!canUseOcrFallback()) {
     return null;
   }
 
@@ -1015,7 +1034,10 @@ async function getOcrSubtitleSnapshot() {
       state.ocrCache.snapshot = snapshot;
       return snapshot;
     })
-    .catch(() => null)
+    .catch((error) => {
+      handleOcrSnapshotFailure(error);
+      return null;
+    })
     .finally(() => {
       state.ocrCache.pending = null;
     });
@@ -1120,6 +1142,47 @@ async function captureOcrSubtitleSnapshot(videoRect, key) {
     entries,
     rect: mergeRects(entries.map((entry) => entry.rect))
   };
+}
+
+function canUseOcrFallback() {
+  if (!state.pageContext?.hasVisibleVideo || !getActiveSiteBehavior().ocrEnabled) {
+    return false;
+  }
+
+  if (
+    typeof globalThis.TextDetector === "undefined" ||
+    typeof globalThis.createImageBitmap !== "function"
+  ) {
+    return false;
+  }
+
+  if (state.capabilities?.ocrCaptureSupported === false) {
+    return false;
+  }
+
+  if (state.ocrSupport.permanentlyUnavailable) {
+    return false;
+  }
+
+  if (Date.now() < state.ocrSupport.suspendedUntil) {
+    return false;
+  }
+
+  return true;
+}
+
+function handleOcrSnapshotFailure(error) {
+  const message = String(error?.message || error || "").toLocaleLowerCase("tr");
+  if (
+    /capturevisibletab|desteklenmiyor|not supported|permission|izin|denied|yetki/.test(message)
+  ) {
+    state.ocrSupport.permanentlyUnavailable = true;
+    state.ocrSupport.reason = message;
+    return;
+  }
+
+  state.ocrSupport.suspendedUntil = Date.now() + OCR_FAILURE_SUSPEND_MS;
+  state.ocrSupport.reason = message;
 }
 
 function loadImageFromDataUrl(dataUrl) {
@@ -3944,11 +4007,15 @@ function normalizeWhitespace(value) {
 function sendRuntimeMessage(message) {
   return new Promise((resolve, reject) => {
     let settled = false;
+    const timeoutId = setTimeout(() => {
+      finishReject(new Error("Extension request timed out"));
+    }, RUNTIME_MESSAGE_TIMEOUT_MS);
     const finishResolve = (response) => {
       if (settled) {
         return;
       }
       settled = true;
+      clearTimeout(timeoutId);
 
       if (!response?.ok) {
         reject(new Error(response?.error || "Extension request failed"));
@@ -3962,6 +4029,7 @@ function sendRuntimeMessage(message) {
         return;
       }
       settled = true;
+      clearTimeout(timeoutId);
       reject(error instanceof Error ? error : new Error(String(error || "Extension request failed")));
     };
 

@@ -103,6 +103,9 @@ const REVIEW_OUTCOME_CONFIG = {
   hard: { nextHours: 12, streakDelta: 1, status: "learning", correctDelta: 1 },
   easy: { nextHours: 72, streakDelta: 1, status: "known", correctDelta: 1 }
 };
+const TRANSLATE_FETCH_TIMEOUT_MS = 4500;
+const TRANSLATE_FETCH_RETRIES = 1;
+const TRANSLATE_FETCH_RETRY_DELAY_MS = 220;
 
 const extensionApi = globalThis.browser || globalThis.chrome;
 const sessionStorageArea = extensionApi.storage.session || extensionApi.storage.local;
@@ -242,7 +245,8 @@ async function handleGetState(tabId) {
   return {
     state: {
       settings,
-      enabled: tabId ? !Boolean(disabledTabs[tabId]) : true
+      enabled: tabId ? !Boolean(disabledTabs[tabId]) : true,
+      capabilities: getRuntimeCapabilities()
     }
   };
 }
@@ -286,12 +290,11 @@ async function handleUpdateSettings(partialSettings, tabId) {
     [STORAGE_KEYS.settings]: nextSettings
   });
 
-  if (tabId) {
-    await notifyTab(tabId, {
-      type: "SETTINGS_UPDATED",
-      settings: nextSettings
-    });
-  }
+  await notifyAllTabs({
+    type: "SETTINGS_UPDATED",
+    settings: nextSettings,
+    capabilities: getRuntimeCapabilities()
+  });
 
   return { settings: nextSettings };
 }
@@ -313,7 +316,7 @@ async function translateText(text, sourceLang = "auto", targetLang = "tr") {
   query.searchParams.append("dt", "ex");
   query.searchParams.set("q", normalizedText);
 
-  const response = await fetch(query.toString());
+  const response = await fetchWithTimeoutAndRetry(query.toString());
 
   if (!response.ok) {
     throw new Error(`Translation failed with status ${response.status}`);
@@ -1340,6 +1343,81 @@ async function notifyTab(tabId, message) {
   } catch (error) {
     // Content script might not be ready on this tab yet.
   }
+}
+
+async function notifyAllTabs(message) {
+  if (typeof extensionApi.tabs?.query !== "function") {
+    return;
+  }
+
+  let tabs = [];
+  try {
+    tabs = await extensionApi.tabs.query({});
+  } catch (error) {
+    return;
+  }
+
+  await Promise.all(
+    tabs
+      .map((tab) => tab?.id)
+      .filter(Boolean)
+      .map((tabId) => notifyTab(tabId, message))
+  );
+}
+
+function getRuntimeCapabilities() {
+  return {
+    ocrCaptureSupported: typeof extensionApi.tabs?.captureVisibleTab === "function",
+    syncStorageSupported: Boolean(syncStorageArea)
+  };
+}
+
+async function fetchWithTimeoutAndRetry(url) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= TRANSLATE_FETCH_RETRIES; attempt += 1) {
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    const timeoutId = controller
+      ? setTimeout(() => controller.abort(), TRANSLATE_FETCH_TIMEOUT_MS)
+      : null;
+
+    try {
+      const response = await fetch(url, {
+        signal: controller?.signal,
+        headers: {
+          Accept: "application/json"
+        },
+        cache: "no-store"
+      });
+
+      if (!response.ok) {
+        throw new Error(`Translation failed with status ${response.status}`);
+      }
+
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= TRANSLATE_FETCH_RETRIES) {
+        break;
+      }
+
+      await sleep(TRANSLATE_FETCH_RETRY_DELAY_MS * (attempt + 1));
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
+  }
+
+  if (lastError?.name === "AbortError") {
+    throw new Error("Translation request timed out");
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Translation request failed");
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function buildEntryId(sourceText, targetLang = "tr") {
