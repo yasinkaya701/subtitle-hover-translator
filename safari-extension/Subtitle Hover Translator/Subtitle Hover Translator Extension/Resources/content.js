@@ -23,6 +23,9 @@ const TOOLTIP_INTERACTION_GRACE_MS = 1400;
 const TOOLTIP_PLAYER_GUARD_PX = 22;
 const LOOSE_TEXT_MAX_CHARS = 640;
 const SUBTITLE_HISTORY_POLL_MS = 900;
+const SCROLL_SUPPRESS_MS = 260;
+const READING_EXTRA_HOVER_DELAY_MS = 140;
+const MIN_STATIONARY_MS_WEB = 120;
 const OCR_SNAPSHOT_TTL_MS = 1400;
 const OCR_TRACK_WORD_DISTANCE_PX = 36;
 const OCR_FAILURE_SUSPEND_MS = 15_000;
@@ -180,6 +183,10 @@ const state = {
   lastHoverKey: "",
   hoverBlockedUntil: 0,
   lastPointerSample: null,
+  lastPointerMoveAt: 0,
+  scrollSuppressedUntil: 0,
+  lastScrollTop: 0,
+  lastScrollLeft: 0,
   selectionTimer: null,
   hoverTimer: null,
   hideTimer: null,
@@ -357,6 +364,13 @@ function handleMouseMove(event) {
     return;
   }
 
+  const now = Date.now();
+  state.lastPointerMoveAt = now;
+
+  if (state.pageContext?.pageMode === "web" && now < state.scrollSuppressedUntil) {
+    return;
+  }
+
   if (state.tooltipManualPinned && !state.tooltip?.contains(event.target)) {
     return;
   }
@@ -397,6 +411,13 @@ function handleMouseMove(event) {
   clearTimeout(state.hideTimer);
 
   state.hoverTimer = window.setTimeout(async () => {
+    if (
+      state.pageContext?.pageMode === "web" &&
+      Date.now() - state.lastPointerMoveAt < MIN_STATIONARY_MS_WEB
+    ) {
+      return;
+    }
+
     const hoveredWord = await getHoveredWordWithFallback(event.clientX, event.clientY);
 
     if (!hoveredWord) {
@@ -882,6 +903,20 @@ function handleDocumentScroll(event) {
     return;
   }
 
+  const scrollElement = document.scrollingElement || document.documentElement;
+  const scrollTop = Number(scrollElement?.scrollTop ?? window.pageYOffset ?? 0);
+  const scrollLeft = Number(scrollElement?.scrollLeft ?? window.pageXOffset ?? 0);
+  const delta =
+    Math.abs(scrollTop - state.lastScrollTop) + Math.abs(scrollLeft - state.lastScrollLeft);
+
+  state.lastScrollTop = scrollTop;
+  state.lastScrollLeft = scrollLeft;
+
+  if (delta <= 1) {
+    return;
+  }
+
+  state.scrollSuppressedUntil = Date.now() + SCROLL_SUPPRESS_MS;
   hideTooltip(true);
 }
 
@@ -1273,16 +1308,20 @@ function getSubtitleContainersNearPoint(clientX, clientY, options = {}) {
     }
   }
 
-  const pointDistance = options.allowNearby ? options.maxDistance ?? HOVER_WORD_DISTANCE_PX : 0;
-  for (const container of getProfileSubtitleCandidates()) {
-    if (isPointNearRect(container.getBoundingClientRect(), clientX, clientY, pointDistance)) {
-      addContainer(container);
+  const canSearchVideo =
+    Boolean(state.pageContext?.hasVisibleVideo || state.pageContext?.supportedHost);
+  if (canSearchVideo) {
+    const pointDistance = options.allowNearby ? options.maxDistance ?? HOVER_WORD_DISTANCE_PX : 0;
+    for (const container of getProfileSubtitleCandidates()) {
+      if (isPointNearRect(container.getBoundingClientRect(), clientX, clientY, pointDistance)) {
+        addContainer(container);
+      }
     }
-  }
 
-  for (const container of getFallbackSubtitleCandidates()) {
-    if (isPointNearRect(container.getBoundingClientRect(), clientX, clientY, pointDistance)) {
-      addContainer(container);
+    for (const container of getFallbackSubtitleCandidates()) {
+      if (isPointNearRect(container.getBoundingClientRect(), clientX, clientY, pointDistance)) {
+        addContainer(container);
+      }
     }
   }
 
@@ -2227,7 +2266,11 @@ function clampNumber(value, min, max) {
 }
 
 function getHoverDelayMs() {
-  return getActiveSiteBehavior().hoverDelayMs;
+  const base = getActiveSiteBehavior().hoverDelayMs;
+  if (state.pageContext?.pageMode === "web") {
+    return clampNumber(base + READING_EXTRA_HOVER_DELAY_MS, 180, 420);
+  }
+  return base;
 }
 
 function getTooltipPreferredWidth(kind) {
