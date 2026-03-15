@@ -1,12 +1,13 @@
 {
-  "name": "subtitle-hover-translator",
+  "name": "subtitle-hover",
   "version": "1.2.0",
   "description": "Interactive subtitle translator for unknown words and sentence selections.",
   "private": true,
   "scripts": {
-    "start": "node server.js",
-    "smoke:stability": "node scripts/run_stability_smoke.js",
-    "smoke:real": "node scripts/run_real_site_smoke.js"
+    "start": "node tools/mock-server/server.js",
+    "smoke:stability": "node tools/scripts/run_stability_smoke.js",
+    "smoke:real": "node tools/scripts/run_real_site_smoke.js",
+    "clean": "rm -rf node_modules package-lock.json && npm install"
   },
   "devDependencies": {
     "playwright-core": "^1.52.0"
