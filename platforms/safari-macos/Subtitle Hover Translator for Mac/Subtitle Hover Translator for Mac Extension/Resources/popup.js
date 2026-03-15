@@ -1,3 +1,12 @@
+/**
+ * @license GPLv3
+ * Copyright (c) 2026 Mehmet Yasin Kaya. All Rights Reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+ * You shall not disclose, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of this software without prior written permission.
+ */
+
 const extensionApi = globalThis.browser || globalThis.chrome;
 const usesPromiseMessagingApi =
   typeof globalThis.browser !== "undefined" && extensionApi === globalThis.browser;
@@ -454,15 +463,39 @@ function renderSubtitleHistory() {
 function renderAnalytics() {
   const total = unknownEntries.length;
   const known = unknownEntries.filter((entry) => getReviewState(entry) === "known").length;
+  const mastered = unknownEntries.filter((entry) => getReviewState(entry) === "mastered").length;
   const learning = unknownEntries.filter((entry) => getReviewState(entry) === "learning").length;
   const dueNow = buildReviewQueue(unknownEntries).filter((entry) => getReviewDueTimestamp(entry) <= Date.now()).length;
   const uniqueSites = new Set(unknownEntries.map((entry) => entry.hostname).filter(Boolean));
   const syncedLabel = currentSettings.syncWordPool ? "Sync acik" : "Sync kapali";
+  const masteryPct = total ? Math.round(((known + mastered) / total) * 100) : 0;
 
   analyticsTotal.textContent = String(total);
   analyticsKnown.textContent = String(known);
   analyticsLearning.textContent = String(learning);
   analyticsDue.textContent = String(dueNow);
+
+  const masteryEl = document.getElementById("analytics-mastery");
+  const masteredEl = document.getElementById("analytics-mastered");
+  const streakEl = document.getElementById("analytics-streak");
+  const todayEl = document.getElementById("analytics-today");
+
+  if (masteryEl) masteryEl.textContent = `${masteryPct}%`;
+  if (masteredEl) masteredEl.textContent = String(mastered);
+
+  // Fetch daily stats from background
+  sendMessage({ type: "GET_LEARNING_STATS" }).then((response) => {
+    if (streakEl && response?.streak != null) {
+      streakEl.textContent = String(response.streak);
+    }
+    if (todayEl && response?.stats) {
+      const todayKey = new Date().toISOString().slice(0, 10);
+      const todayStats = response.stats[todayKey];
+      const todayCount = todayStats ? (todayStats.saved || 0) + (todayStats.reviewed || 0) : 0;
+      todayEl.textContent = String(todayCount);
+    }
+  }).catch(() => {});
+
   analyticsCopy.textContent = total
     ? `${uniqueSites.size || 1} site, ${syncedLabel}, ${currentSettings.subtitleHistoryLimit || 10} satir history.`
     : "Kayitlar geldikce ogrenme ozetin burada gorunecek.";
@@ -472,8 +505,7 @@ function renderAnalytics() {
     return;
   }
 
-  const accuracy = Math.round((known / Math.max(total, 1)) * 100);
-  analyticsSummary.textContent = `${accuracy}% bilinen, ${dueNow} kart hemen tekrar bekliyor, ${uniqueSites.size || 1} farkli siteden veri var.`;
+  analyticsSummary.textContent = `${masteryPct}% ustalasildi, ${mastered} kelime tamamen ogrenildi, ${dueNow} kart hemen tekrar bekliyor.`;
 }
 
 function formatSavedDetails(entry) {
@@ -942,6 +974,10 @@ function getReviewState(entry) {
 
 function getReviewLabel(entry) {
   const state = getReviewState(entry);
+  if (state === "mastered") {
+    return "Mastered";
+  }
+
   if (state === "known") {
     return "Bildim";
   }

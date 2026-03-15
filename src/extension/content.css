@@ -14,7 +14,7 @@
   --sht-accent-strong: #ffd8a8;
   --sht-success: #98e2ce;
   --sht-error: #ffbca9;
-  --sht-backdrop: blur(14px) saturate(120%);
+  --sht-backdrop: blur(24px) saturate(140%);
   position: fixed;
   z-index: 2147483647;
   width: min(380px, calc(100vw - 24px));
@@ -24,24 +24,25 @@
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   scrollbar-gutter: stable;
-  will-change: left, top, transform;
+  will-change: left, top, transform, opacity;
   contain: layout style paint;
-  font-family: "Avenir Next", "Trebuchet MS", sans-serif;
+  font-family: "Outfit", "Inter", "Avenir Next", system-ui, sans-serif;
   color: var(--sht-text);
   background:
-    linear-gradient(180deg, var(--sht-bg-top), var(--sht-bg-bottom)),
+    linear-gradient(160deg, var(--sht-bg-top), var(--sht-bg-bottom)),
     var(--sht-bg-base);
   border: 1px solid var(--sht-border);
-  border-radius: 18px;
+  border-radius: 20px;
   box-shadow: var(--sht-shadow);
   backdrop-filter: var(--sht-backdrop);
+  -webkit-backdrop-filter: var(--sht-backdrop);
   opacity: 0;
-  transform: translate3d(0, 8px, 0) scale(0.985);
+  transform: translate3d(0, 12px, 0) scale(0.96);
   transition:
-    opacity 140ms ease,
-    transform 160ms ease,
-    box-shadow 160ms ease,
-    border-color 160ms ease;
+    opacity 300ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 400ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 300ms ease,
+    border-color 300ms ease;
 }
 
 .sht-root[data-theme="sand"] {

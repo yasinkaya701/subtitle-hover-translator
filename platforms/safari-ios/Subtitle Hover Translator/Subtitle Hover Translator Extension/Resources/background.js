@@ -1,3 +1,12 @@
+/**
+ * @license GPLv3
+ * Copyright (c) 2026 Mehmet Yasin Kaya. All Rights Reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+ * You shall not disclose, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of this software without prior written permission.
+ */
+
 const DEFAULT_SITE_PROFILE_SETTINGS = {
   youtube: {
     hoverDelayMs: 110,
@@ -96,14 +105,52 @@ const STORAGE_KEYS = {
   unknownWords: "unknownWords",
   disabledTabs: "disabledTabs",
   sharedWordPool: "sharedWordPool",
-  subtitleHistory: "subtitleHistory"
+  subtitleHistory: "subtitleHistory",
+  learningStats: "learningStats"
 };
 
+const SRS_INTERVALS_HOURS = [0.25, 1, 8, 24, 72, 168, 720];
 const REVIEW_OUTCOME_CONFIG = {
-  again: { nextHours: 0.15, streak: 0, status: "learning", correctDelta: 0 },
-  hard: { nextHours: 12, streakDelta: 1, status: "learning", correctDelta: 1 },
-  easy: { nextHours: 72, streakDelta: 1, status: "known", correctDelta: 1 }
+  again: { correctDelta: 0, resetStreak: true },
+  hard: { correctDelta: 1, resetStreak: false },
+  easy: { correctDelta: 1, resetStreak: false, bonusMultiplier: 1.5 }
 };
+
+const CEFR_A1_WORDS = new Set([
+  "the","be","to","of","and","a","in","that","have","i","it","for","not","on","with","he","as","you","do","at",
+  "this","but","his","by","from","they","we","say","her","she","or","an","will","my","one","all","would","there",
+  "their","what","so","up","out","if","about","who","get","which","go","me","when","make","can","like","time",
+  "no","just","him","know","take","people","into","year","your","good","some","could","them","see","other",
+  "than","now","look","only","come","its","over","think","also","back","after","use","two","how","our","work",
+  "first","well","way","even","new","want","because","any","give","day","most","us","is","am","are","was","were",
+  "yes","no","hello","name","water","food","house","big","small","old","young","man","woman","boy","girl",
+  "mother","father","friend","school","book","eat","drink","sleep","run","walk","play","read","write","open","close"
+]);
+const CEFR_A2_WORDS = new Set([
+  "find","here","thing","many","those","tell","very","hand","high","keep","let","begin","seem","help","show",
+  "hear","turn","start","might","need","should","still","between","never","last","long","great","little",
+  "own","life","left","world","home","head","right","story","children","city","earth","eye","light","voice",
+  "far","ask","country","answer","room","enough","early","often","watch","carry","happen","again","family",
+  "leave","put","close","idea","late","important","live","become","money","interest","body","remember",
+  "door","wind","sea","river","move","face","car","once","white","bring","understand","hard","stop","travel"
+]);
+const CEFR_B1_WORDS = new Set([
+  "experience","result","during","business","government","market","provide","education","national",
+  "development","social","community","report","problem","company","information","system","program",
+  "research","continue","increase","believe","several","political","process","support","especially",
+  "available","international","local","consider","technology","environment","significant","according",
+  "include","service","produce","possible","situation","suggest","require","period","involve","project",
+  "reduce","opportunity","benefit","community","performance","establish","approach","particular"
+]);
+const CEFR_B2_WORDS = new Set([
+  "acknowledge","acquire","adequate","advocate","ambiguous","anticipate","apparent","comprehensive",
+  "compulsory","concurrent","consequence","constitute","contemporary","controversial","conventional",
+  "demonstrate","diminish","distinction","diverse","dramatic","emphasis","emerge","ensure","equivalent",
+  "evaluate","evident","exploit","fluctuate","fundamental","generate","hypothesis","illustrate",
+  "implement","implication","impose","inevitable","infrastructure","initiative","insight","integrity",
+  "interpret","justify","liberal","likewise","mechanism","nevertheless","notion","outcome","overwhelm",
+  "perceive","perspective","phenomenon","predominant","preliminary","presumably","priority","proceed"
+]);
 const TRANSLATE_FETCH_TIMEOUT_MS = 4500;
 const TRANSLATE_FETCH_RETRIES = 1;
 const TRANSLATE_FETCH_RETRY_DELAY_MS = 220;
@@ -250,6 +297,14 @@ async function handleMessage(message, sender) {
         });
       }
       return { entries: [] };
+    case "GET_LEARNING_STATS": {
+      const statsResult = await extensionApi.storage.local.get(STORAGE_KEYS.learningStats);
+      const statsData = statsResult[STORAGE_KEYS.learningStats] || {};
+      return {
+        stats: statsData,
+        streak: calculateDailyStreak(statsData)
+      };
+    }
     default:
       throw new Error(`Unsupported message type: ${message.type}`);
   }
@@ -622,6 +677,22 @@ async function enrichTranslationDetails(baseDetails, sourceText, detectedSourceL
     );
   }
 
+  // Propagate IPA from Dictionary API into pronunciation
+  if (dictionaryEntry?.ipa && nextDetails.pronunciation) {
+    nextDetails.pronunciation = {
+      ...nextDetails.pronunciation,
+      ipa: dictionaryEntry.ipa
+    };
+  } else if (dictionaryEntry?.ipa && !nextDetails.pronunciation) {
+    nextDetails.pronunciation = {
+      text: normalizedSource,
+      lang: "en-US",
+      label: "Dinle",
+      slowerLabel: "Yavas",
+      ipa: dictionaryEntry.ipa
+    };
+  }
+
   nextDetails.__lexiconBoosted = true;
   return nextDetails;
 }
@@ -725,6 +796,20 @@ function parseDictionaryApiPayload(payload, fallbackWord) {
   const seenSynonyms = new Set();
   let primaryPartOfSpeech = "";
 
+  // Extract IPA phonetic from the Dictionary API
+  let ipa = "";
+  const phonetics = Array.isArray(entry?.phonetics) ? entry.phonetics : [];
+  for (const phonetic of phonetics) {
+    const candidate = safeText(phonetic?.text);
+    if (candidate) {
+      ipa = candidate;
+      break;
+    }
+  }
+  if (!ipa && entry?.phonetic) {
+    ipa = safeText(entry.phonetic);
+  }
+
   for (const meaning of meanings) {
     const partOfSpeech = safeText(meaning?.partOfSpeech);
     if (!primaryPartOfSpeech && partOfSpeech) {
@@ -781,6 +866,7 @@ function parseDictionaryApiPayload(payload, fallbackWord) {
   return {
     headword,
     partOfSpeech: primaryPartOfSpeech,
+    ipa,
     definitions,
     synonyms,
     examples
@@ -990,6 +1076,7 @@ function buildTranslationDetails(payload, sourceText, detectedSourceLanguage) {
   return {
     headword,
     partOfSpeech,
+    cefrLevel: estimateCefrLevel(sourceText, detectedSourceLanguage),
     detailedMeanings,
     synonyms: synonymsResult.synonyms,
     wordForms: buildWordForms(headword, partOfSpeech, detectedSourceLanguage),
@@ -1003,6 +1090,7 @@ function emptyTranslationDetails() {
   return {
     headword: "",
     partOfSpeech: "",
+    cefrLevel: "",
     detailedMeanings: [],
     synonyms: [],
     wordForms: [],
@@ -1015,6 +1103,31 @@ function emptyTranslationDetails() {
   };
 }
 
+function estimateCefrLevel(word, detectedLanguage) {
+  if (!word || !String(detectedLanguage || "").toLowerCase().startsWith("en")) {
+    return "";
+  }
+  const lower = word.trim().toLowerCase();
+  if (!SINGLE_WORD_REGEX.test(lower)) return "";
+  if (CEFR_A1_WORDS.has(lower)) return "A1";
+  if (CEFR_A2_WORDS.has(lower)) return "A2";
+  if (CEFR_B1_WORDS.has(lower)) return "B1";
+  if (CEFR_B2_WORDS.has(lower)) return "B2";
+  const syllables = countSyllables(lower);
+  if (lower.length <= 4 && syllables <= 1) return "A2";
+  if (lower.length <= 6 && syllables <= 2) return "B1";
+  if (lower.length <= 9 && syllables <= 3) return "B2";
+  return "C1";
+}
+
+function countSyllables(word) {
+  const matches = word.match(/[aeiouy]+/gi);
+  let count = matches ? matches.length : 1;
+  if (word.endsWith("e") && count > 1) count--;
+  if (word.endsWith("le") && word.length > 3 && !/[aeiouy]le$/i.test(word)) count++;
+  return Math.max(1, count);
+}
+
 function sanitizeTranslationDetails(details) {
   if (!details || typeof details !== "object") {
     return emptyTranslationDetails();
@@ -1023,6 +1136,7 @@ function sanitizeTranslationDetails(details) {
   return {
     headword: safeText(details.headword),
     partOfSpeech: safeText(details.partOfSpeech),
+    cefrLevel: safeText(details.cefrLevel),
     detailedMeanings: Array.isArray(details.detailedMeanings)
       ? details.detailedMeanings
           .map((group) => ({
@@ -1114,6 +1228,7 @@ function sanitizePronunciation(value) {
   const lang = safeText(value.lang);
   const label = safeText(value.label);
   const slowerLabel = safeText(value.slowerLabel);
+  const ipa = safeText(value.ipa);
 
   if (!text) {
     return null;
@@ -1123,7 +1238,8 @@ function sanitizePronunciation(value) {
     text,
     lang,
     label,
-    slowerLabel
+    slowerLabel,
+    ipa
   };
 }
 
@@ -1581,6 +1697,7 @@ async function saveUnknownWord(payload, sender) {
 
   const settings = await getSettings();
   await syncSharedWordPool(nextEntry, settings);
+  await updateDailyLearningStats("save");
 
   return nextEntry;
 }
@@ -1599,14 +1716,22 @@ async function updateUnknownWordReview(entryId, outcome) {
   }
 
   const now = new Date();
-  const nextReviewAt = new Date(now.getTime() + config.nextHours * 60 * 60 * 1000);
   const currentReview = buildInitialReviewState(entries[entryIndex].review);
+  const nextStreak = config.resetStreak ? 0 : currentReview.streak + 1;
+  const intervalIndex = Math.min(nextStreak, SRS_INTERVALS_HOURS.length - 1);
+  let nextHours = SRS_INTERVALS_HOURS[intervalIndex];
+  if (config.bonusMultiplier) {
+    nextHours *= config.bonusMultiplier;
+  }
+  const nextReviewAt = new Date(now.getTime() + nextHours * 60 * 60 * 1000);
+  const status = nextStreak >= 5 ? "mastered" : nextStreak >= 2 ? "known" : "learning";
+
   const review = {
     ...currentReview,
     reviewCount: currentReview.reviewCount + 1,
     correctCount: currentReview.correctCount + config.correctDelta,
-    streak: config.streak ?? currentReview.streak + (config.streakDelta || 0),
-    status: config.status,
+    streak: nextStreak,
+    status,
     lastOutcome: normalizedOutcome,
     lastReviewedAt: now.toISOString(),
     nextReviewAt: nextReviewAt.toISOString()
@@ -1624,7 +1749,48 @@ async function updateUnknownWordReview(entryId, outcome) {
     [STORAGE_KEYS.unknownWords]: nextEntries
   });
 
+  await updateDailyLearningStats("review");
   return nextEntry;
+}
+
+async function updateDailyLearningStats(action) {
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const result = await extensionApi.storage.local.get(STORAGE_KEYS.learningStats);
+  const stats = result[STORAGE_KEYS.learningStats] || {};
+  if (!stats[todayKey]) {
+    stats[todayKey] = { saved: 0, reviewed: 0, date: todayKey };
+  }
+  if (action === "save") {
+    stats[todayKey].saved += 1;
+  } else if (action === "review") {
+    stats[todayKey].reviewed += 1;
+  }
+  // Keep only the last 30 days
+  const keys = Object.keys(stats).sort().reverse().slice(0, 30);
+  const trimmed = {};
+  for (const key of keys) {
+    trimmed[key] = stats[key];
+  }
+  await extensionApi.storage.local.set({ [STORAGE_KEYS.learningStats]: trimmed });
+  return trimmed;
+}
+
+function calculateDailyStreak(stats) {
+  if (!stats || typeof stats !== "object") return 0;
+  const days = Object.keys(stats).sort().reverse();
+  let streak = 0;
+  const now = new Date();
+  for (let i = 0; i < days.length; i++) {
+    const expected = new Date(now);
+    expected.setDate(expected.getDate() - i);
+    const expectedKey = expected.toISOString().slice(0, 10);
+    if (days.includes(expectedKey) && (stats[expectedKey].saved > 0 || stats[expectedKey].reviewed > 0)) {
+      streak++;
+    } else {
+      break;
+    }
+  }
+  return streak;
 }
 
 async function getSettings() {
@@ -1837,6 +2003,22 @@ function buildGrammarBreakdown(text, translatedText, language) {
   let tense = "";
 
   if (String(language || "").toLowerCase().startsWith("en")) {
+    // Passive voice detection
+    if (/\b(is|are|was|were|been|being)\b\s+\w+ed\b/i.test(lowerText)) {
+      structure = "Edilgen (passive) yapi";
+      notes.push("Passive yapida kullanilmis: ozne eylemi degil, eyleme maruz kaliyor.");
+    }
+
+    // Conditional detection
+    if (/\bif\b.+\b(would|could|might|will)\b/i.test(lowerText) || /\b(would|could|might)\b.+\bif\b/i.test(lowerText)) {
+      notes.push("Kosul (conditional) yapisi algilandi.");
+    }
+
+    // Phrasal verb detection
+    if (/\b(give|take|put|get|come|go|look|turn|break|bring|carry|cut|hold|keep|make|pick|pull|run|set|shut|stand|throw|work)\b\s+(up|down|out|in|on|off|over|away|back|about|along|around|through|after)\b/i.test(lowerText)) {
+      notes.push("Phrasal verb (birlesik fiil) algilandi. Parcalarin tek basina anlamlari farkli olabilir.");
+    }
+
     if (/\b(will|going to)\b/i.test(lowerText)) {
       tense = "Future";
       notes.push("Gelecek zamana isaret eden bir yapi var.");

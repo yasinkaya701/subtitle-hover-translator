@@ -1,8 +1,8 @@
 /**
- * @license Proprietary
+ * @license GPLv3
  * Copyright (c) 2026 Mehmet Yasin Kaya. All Rights Reserved.
  *
- * This source code is the confidential and proprietary information of Mehmet Yasin Kaya.
+ * This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
  * You shall not disclose, copy, modify, merge, publish, distribute, sublicense,
  * and/or sell copies of this software without prior written permission.
  */

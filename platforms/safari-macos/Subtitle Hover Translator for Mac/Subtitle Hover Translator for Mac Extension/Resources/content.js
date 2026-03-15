@@ -1,3 +1,12 @@
+/**
+ * @license GPLv3
+ * Copyright (c) 2026 Mehmet Yasin Kaya. All Rights Reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+ * You shall not disclose, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of this software without prior written permission.
+ */
+
 const WORD_REGEX = /[\p{L}\p{M}\d]+(?:['’-][\p{L}\p{M}\d]+)*/gu;
 const IGNORE_SELECTOR =
   "input, textarea, select, button, nav, header, footer, aside, [role='navigation'], [role='menu'], [role='menubar'], [contenteditable='true'], .sht-root";
@@ -3799,8 +3808,30 @@ function renderTooltipDetails(tooltip, details, sourceText, contextText = "") {
     metaParts.push(safeDetails.partOfSpeech);
   }
 
-  metaElement.textContent = metaParts.join(" • ");
-  metaElement.hidden = metaParts.length === 0;
+  if (safeDetails.pronunciation?.ipa) {
+    metaParts.push(safeDetails.pronunciation.ipa);
+  }
+
+  metaElement.textContent = "";
+
+  if (safeDetails.cefrLevel) {
+    const cefrBadge = document.createElement("span");
+    cefrBadge.className = `sht-cefr-badge sht-cefr-${safeDetails.cefrLevel.toLowerCase()}`;
+    cefrBadge.textContent = safeDetails.cefrLevel;
+    cefrBadge.title = getCefrDescription(safeDetails.cefrLevel);
+    metaElement.appendChild(cefrBadge);
+    if (metaParts.length > 0) {
+      metaElement.append(" ");
+    }
+  }
+
+  if (metaParts.length > 0) {
+    const metaText = document.createElement("span");
+    metaText.textContent = metaParts.join(" • ");
+    metaElement.appendChild(metaText);
+  }
+
+  metaElement.hidden = !safeDetails.cefrLevel && metaParts.length === 0;
 
   renderPhraseMatches(phrasesElement, safeDetails.phraseMatches || []);
   phrasesSection.hidden = phrasesElement.childElementCount === 0;
@@ -5080,4 +5111,16 @@ function getLocalProfileOverride() {
   }
 
   return VIDEO_SITE_PROFILES.find((profile) => profile.id === profileId) || null;
+}
+
+function getCefrDescription(level) {
+  const descriptions = {
+    A1: "Başlangıç – En temel kelimeler",
+    A2: "Temel – Günlük konuşma kelimeleri",
+    B1: "Orta – İş ve eğitim kelimeleri",
+    B2: "Orta-İleri – Akademik kelimeler",
+    C1: "İleri – Nadir ve sofistike kelimeler",
+    C2: "Uzman – Çok nadir kelimeler"
+  };
+  return descriptions[level] || level;
 }
