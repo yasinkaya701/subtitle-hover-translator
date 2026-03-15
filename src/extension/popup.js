@@ -1,3 +1,12 @@
+/**
+ * @license Proprietary
+ * Copyright (c) 2026 Mehmet Yasin Kaya. All Rights Reserved.
+ *
+ * This source code is the confidential and proprietary information of Mehmet Yasin Kaya.
+ * You shall not disclose, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of this software without prior written permission.
+ */
+
 const extensionApi = globalThis.browser || globalThis.chrome;
 const usesPromiseMessagingApi =
   typeof globalThis.browser !== "undefined" && extensionApi === globalThis.browser;
