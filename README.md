@@ -75,7 +75,16 @@ Proje, **Clean Architecture** prensipleriyle yapılandırılmıştır:
 
 ---
 
-## 🛰️ İletişim & Destek
+---
+## ⚖️ Lisans ve Telif Hakkı (License)
+
+Tüm hakları saklıdır (All Rights Reserved). Bu projenin kaynak kodları, tasarımı ve iç mimarisi **Mehmet Yasin Kaya**'ya aittir.
+
+Projeyi kopyalamak, değiştirmek, kendi adınıza yayınlamak veya ticari bir ürüne dönüştürmek **kesinlikle yasaktır**. Açık kaynaklı bir proje değildir, yalnızca dijital portfolyo veya inceleme amacıyla burada bulunmaktadır.
+
+---
+
+## 📬 İletişim & Destek
 
 Geliştiren: **Mehmet Yasin Kaya**  
 E-posta: [gs7016903@gmail.com](mailto:gs7016903@gmail.com)  
@@ -83,3 +92,4 @@ Platform: [GitHub](https://github.com/yasinkaya701)
 
 ---
 *Subtitle Hover ile öğrenmek artık bir angarya değil, bir zevk.*
+*(c) 2026 Mehmet Yasin Kaya. All Rights Reserved.*
