@@ -109,15 +109,15 @@ body[data-theme="ink"] {
 }
 
 html {
-  width: 404px !important;
-  min-width: 404px !important;
+  width: 400px !important;
+  min-width: 400px !important;
   overflow-x: hidden !important;
 }
 
 body {
   margin: 0;
-  width: 404px !important;
-  min-width: 404px !important;
+  width: 100% !important;
+  max-width: 400px !important;
   min-height: 640px !important;
   overflow-x: hidden !important;
   font-family: "SF Pro Text", "Avenir Next", "Segoe UI", "Inter", sans-serif;

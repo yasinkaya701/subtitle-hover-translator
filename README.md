@@ -37,8 +37,16 @@ Eğer internete Chrome veya benzeri bir tarayıcıdan giriyorsanız bunu yapın:
 ![Chrome Geliştirici Modu Açma](chrome_extensions_developer_mode.png)
 
 *   **Adım 3:** O düğmeyi açınca sol üstte yeni düğmeler belirecek. En soldaki **"Paketlenmemiş öğe yükle" (Load unpacked)** yazan butona tıklayın.
+
+![Paketlenmemiş Öğe Yükle Butonu](chrome_load_unpacked_button.png)
+
 *   **Adım 4:** İndirdiğiniz zip dosyasını klasöre çıkartın ve açılan pencerede **hiçbir alt klasöre girmeden direkt indirdiğiniz o ana klasörü seçip** sağ alttaki **SEÇ / YÜKLE** butonuna basın. (Artık klasörlerin içine girmenize gerek yok!)
+
+![Eklenti Klasörü Seçme](chrome_select_folder.png)
+
 *   **BİTTİ!** Sağ üst köşede bir yapboz parçası iconu göreceksiniz. Ona tıklayıp eklentiyi ekrana sabitleyin. Şimdi herhangi bir videoda altyazının üzerine farenizi götürün!
+
+![Eklentiyi Ekrana Sabitleme](chrome_extension_pin.png)
 
 ---
 
