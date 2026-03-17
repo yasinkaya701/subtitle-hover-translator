@@ -1,10 +1,10 @@
 /**
- * @license GPLv3
+ * @license Proprietary
  * Copyright (c) 2026 Mehmet Yasin Kaya. All Rights Reserved.
  *
- * This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
- * You shall not disclose, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of this software without prior written permission.
+ * This software and its documentation are the proprietary property of Mehmet Yasin Kaya.
+ * You may not use, copy, modify, merge, publish, distribute, sublicense,
+ * or sell copies of this software without prior written permission from the author.
  */
 
 const DEFAULT_SITE_PROFILE_SETTINGS = {
