@@ -28,8 +28,14 @@ Bu dosyaları bilgisayarınızın tanıması için küçük bir program kurmamı
 
 ### 2. Google Chrome veya Edge İçin (En Kolay Yol)
 Eğer internete Chrome veya benzeri bir tarayıcıdan giriyorsanız bunu yapın:
+
+![GitHub Download ZIP Adımı](github_download_zip.png)
+
 *   **Adım 1:** Chrome'u açın. En üstteki site adresi yazdığınız uzun çubuğun içine hiçbir şeye tıklamadan şunu yazıp Enter'a basın: **`chrome://extensions/`**
 *   **Adım 2:** Açılan sayfanın sağ üst köşesinde **Geliştirici modu** adında küçük bir düğme göreceksiniz. Onu **Açık (Mavi)** hale getirin.
+
+![Chrome Geliştirici Modu Açma](chrome_extensions_developer_mode.png)
+
 *   **Adım 3:** O düğmeyi açınca sol üstte yeni düğmeler belirecek. En soldaki **"Paketlenmemiş öğe yükle" (Load unpacked)** yazan butona tıklayın.
 *   **Adım 4:** İndirdiğiniz zip dosyasını klasöre çıkartın ve açılan pencerede **hiçbir alt klasöre girmeden direkt indirdiğiniz o ana klasörü seçip** sağ alttaki **SEÇ / YÜKLE** butonuna basın. (Artık klasörlerin içine girmenize gerek yok!)
 *   **BİTTİ!** Sağ üst köşede bir yapboz parçası iconu göreceksiniz. Ona tıklayıp eklentiyi ekrana sabitleyin. Şimdi herhangi bir videoda altyazının üzerine farenizi götürün!
