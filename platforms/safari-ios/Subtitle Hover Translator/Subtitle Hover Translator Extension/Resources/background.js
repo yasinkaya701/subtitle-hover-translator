@@ -174,6 +174,34 @@ const MAX_CONTEXT_PHRASE_CANDIDATES = 2;
 const extensionApi = globalThis.browser || globalThis.chrome;
 const sessionStorageArea = extensionApi.storage.session || extensionApi.storage.local;
 const syncStorageArea = extensionApi.storage.sync || null;
+
+// storage.sync being PRESENT does not mean it WORKS: Safari exposes the API object even when
+// the user isn't signed into iCloud (or in unsigned dev builds), and calls then reject/throw.
+// These wrappers make sync failures degrade silently to local-only storage instead of
+// propagating up and corrupting unrelated UI (the popup's already-rendered hero state, in
+// particular — a single failed sync read used to blow away a working popup).
+async function safeSyncStorageGet(key, fallbackValue) {
+  if (!syncStorageArea) {
+    return { [key]: fallbackValue };
+  }
+  try {
+    return await syncStorageArea.get(key);
+  } catch (error) {
+    console.warn("Sync storage read failed, continuing local-only:", error);
+    return { [key]: fallbackValue };
+  }
+}
+
+async function safeSyncStorageSet(entries) {
+  if (!syncStorageArea) {
+    return;
+  }
+  try {
+    await syncStorageArea.set(entries);
+  } catch (error) {
+    console.warn("Sync storage write failed, continuing local-only:", error);
+  }
+}
 const lexiconCache = new Map();
 const translationCache = new Map();
 let translationCacheLoaded = false;
@@ -201,13 +229,11 @@ extensionApi.runtime.onInstalled.addListener(async () => {
     [STORAGE_KEYS.subtitleHistory]: {}
   });
 
-  if (syncStorageArea) {
-    const syncCurrent = await syncStorageArea.get(STORAGE_KEYS.sharedWordPool);
-    if (!Array.isArray(syncCurrent[STORAGE_KEYS.sharedWordPool])) {
-      await syncStorageArea.set({
-        [STORAGE_KEYS.sharedWordPool]: []
-      });
-    }
+  const syncCurrent = await safeSyncStorageGet(STORAGE_KEYS.sharedWordPool, []);
+  if (!Array.isArray(syncCurrent[STORAGE_KEYS.sharedWordPool])) {
+    await safeSyncStorageSet({
+      [STORAGE_KEYS.sharedWordPool]: []
+    });
   }
 });
 
@@ -303,11 +329,9 @@ async function handleMessage(message, sender) {
       await extensionApi.storage.local.set({
         [STORAGE_KEYS.unknownWords]: []
       });
-      if (syncStorageArea) {
-        await syncStorageArea.set({
-          [STORAGE_KEYS.sharedWordPool]: []
-        });
-      }
+      await safeSyncStorageSet({
+        [STORAGE_KEYS.sharedWordPool]: []
+      });
       return { entries: [] };
     case "GET_LEARNING_STATS": {
       const statsResult = await extensionApi.storage.local.get(STORAGE_KEYS.learningStats);
@@ -1976,7 +2000,7 @@ async function getSharedWordPoolEntries(settings = null) {
     return [];
   }
 
-  const result = await syncStorageArea.get(STORAGE_KEYS.sharedWordPool);
+  const result = await safeSyncStorageGet(STORAGE_KEYS.sharedWordPool, []);
   return Array.isArray(result[STORAGE_KEYS.sharedWordPool])
     ? result[STORAGE_KEYS.sharedWordPool].map((entry) => ({
         ...entry,
@@ -2001,7 +2025,7 @@ async function syncSharedWordPool(entry, settings = null) {
   const nextEntries = currentEntries.filter((item) => item.id !== compactEntry.id);
   nextEntries.unshift(compactEntry);
 
-  await syncStorageArea.set({
+  await safeSyncStorageSet({
     [STORAGE_KEYS.sharedWordPool]: nextEntries.slice(0, 60)
   });
 }

@@ -193,8 +193,18 @@ async function init() {
   renderEnabledState(enabledToggle.checked);
   renderSiteProfileCard();
   renderOverview();
-  await loadUnknownWords();
-  await loadSubtitleHistory();
+
+  // These are secondary/enhancement data (word library, subtitle history). A failure here
+  // (e.g. Safari's storage.sync rejecting because the user isn't signed into iCloud) must not
+  // propagate up and blow away the hero UI that was JUST rendered correctly above — previously
+  // one uncaught rejection here would fall through to the outer catch and overwrite working
+  // "Aktif sekme"/status-chip state with a generic error message.
+  await loadUnknownWords().catch((error) => {
+    console.warn("Bilinmeyen kelimeler yuklenemedi:", error);
+  });
+  await loadSubtitleHistory().catch((error) => {
+    console.warn("Altyazi gecmisi yuklenemedi:", error);
+  });
 }
 
 function jumpToCard(element) {

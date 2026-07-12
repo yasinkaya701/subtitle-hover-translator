@@ -169,6 +169,15 @@ body::-webkit-scrollbar-thumb,
 .shell {
   padding: 16px 16px 18px;
   display: grid;
+  /* Without an explicit track, an implicit "auto" grid column sizes to its content's
+     min-content instead of the container's available width, so a single wide descendant
+     (e.g. a <select> whose intrinsic width is computed from its longest option) blows the
+     whole grid — and every sibling card with it — out past the fixed 400px popup. Chrome's
+     extension popup silently grows the window to hide this; Safari's popover doesn't, which
+     is what showed up as the popup being shifted/overflowing to the right. minmax(0, 1fr)
+     caps the track's minimum at 0 so content wraps/clips internally instead of forcing growth.
+  */
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
 }
 
@@ -317,7 +326,7 @@ body::-webkit-scrollbar-thumb,
 
 .overview-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(120px, 100%), 1fr));
   gap: 10px;
   margin-top: 0;
 }
@@ -415,7 +424,7 @@ body::-webkit-scrollbar-thumb,
 
 .quick-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
   margin-top: 0;
 }
@@ -427,6 +436,7 @@ body::-webkit-scrollbar-thumb,
 
 .tip-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   margin-top: 10px;
 }
@@ -445,14 +455,16 @@ body::-webkit-scrollbar-thumb,
 
 .settings-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
   margin-top: 12px;
 }
 
 label {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
+  min-width: 0;
   color: var(--muted);
 }
 
@@ -482,6 +494,7 @@ label {
 
 select {
   width: 100%;
+  min-width: 0;
   border: 1px solid rgba(30, 58, 52, 0.14);
   border-radius: 14px;
   padding: 10px 12px;
@@ -856,13 +869,14 @@ select:hover {
 
 .analytics-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
   margin-top: 12px;
 }
 
 .metric-card {
   display: grid;
+  min-width: 0;
   gap: 6px;
   padding: 12px;
   border-radius: 16px;
@@ -891,7 +905,7 @@ select:hover {
 }
 
 .analytics-grid {
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .footnote {
@@ -935,15 +949,15 @@ select:hover {
 }
 
 @media (max-width: 420px) {
-  body {
-    width: 100vw;
-    min-height: 100vh;
-  }
+  /* Popup width is fixed (see body { width: 400px !important } above), never actually
+     responsive, so this never needs a vw/vh-based body override — that unit resolves against
+     the browser's own popover frame, which is exactly the value that diverges between engines
+     and caused the original overflow. Grid tracks below stay explicitly narrow instead. */
 
   .overview-grid,
   .quick-grid,
   .action-cluster,
   .settings-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
