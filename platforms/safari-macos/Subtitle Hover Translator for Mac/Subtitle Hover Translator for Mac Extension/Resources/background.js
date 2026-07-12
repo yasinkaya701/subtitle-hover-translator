@@ -160,6 +160,13 @@ const TRANSLATE_FAST_RETRY_DELAY_MS = 140;
 const LEXICON_FETCH_TIMEOUT_MS = 1600;
 const LEXICON_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 const LEXICON_CACHE_MAX = 320;
+// Persistent Google-translation cache: survives service-worker restarts and page reloads so
+// the same word/sentence is never re-fetched from Google within the TTL. This is the second
+// half of the request-volume reduction (alongside lazy enrichment).
+const TRANSLATION_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 30;
+const TRANSLATION_CACHE_MAX = 600;
+const TRANSLATION_CACHE_STORAGE_KEY = "translationCache";
+const TRANSLATION_CACHE_PERSIST_DELAY_MS = 3000;
 const CONTEXT_TARGET_MARKER = "[[*]]";
 const CONTEXT_TARGET_MARKER_END = "[[/]]";
 const MAX_CONTEXT_PHRASE_CANDIDATES = 2;
@@ -168,6 +175,10 @@ const extensionApi = globalThis.browser || globalThis.chrome;
 const sessionStorageArea = extensionApi.storage.session || extensionApi.storage.local;
 const syncStorageArea = extensionApi.storage.sync || null;
 const lexiconCache = new Map();
+const translationCache = new Map();
+let translationCacheLoaded = false;
+let translationCacheLoadPromise = null;
+let translationCachePersistTimer = null;
 
 extensionApi.runtime.onInstalled.addListener(async () => {
   const current = await extensionApi.storage.local.get([
@@ -255,6 +266,7 @@ async function handleMessage(message, sender) {
           message.targetLang,
           {
             mode: message.mode,
+            enrich: message.enrich === true,
             contextText: message.contextText,
             markedContextText: message.markedContextText,
             phraseCandidates: message.phraseCandidates,
@@ -380,7 +392,7 @@ async function translateText(text, sourceLang = "auto", targetLang = "tr", optio
 
   const normalizedText = text.trim();
   const translatePolicy = resolveTranslatePolicy(options?.mode);
-  const baseResult = await fetchGoogleTranslation(
+  const baseResult = await fetchGoogleTranslationCached(
     normalizedText,
     sourceLang,
     targetLang,
@@ -422,32 +434,11 @@ async function translateText(text, sourceLang = "auto", targetLang = "tr", optio
     requestKey: safeText(options?.requestKey)
   };
 
-  const tabId = Number.isInteger(options?.tabId) ? options.tabId : null;
-  if (tabId) {
-    void buildEnrichedTranslation(
-      normalizedText,
-      baseResult,
-      dictionaryDetails,
-      detectedSourceLanguage,
-      targetLang,
-      {
-        ...options,
-        translatePolicy: resolveTranslatePolicy(options?.mode)
-      }
-    )
-      .then((enrichedTranslation) => {
-        if (shouldDispatchEnrichedTranslation(baseTranslation, enrichedTranslation)) {
-          notifyTab(tabId, {
-            type: "TRANSLATION_ENRICHED",
-            translation: enrichedTranslation,
-            requestKey: enrichedTranslation.requestKey
-          });
-        }
-      })
-      .catch((err) => {
-        console.warn("Async enrichment failed:", err);
-      });
-
+  // Lazy enrichment: the hover fast-path returns ONLY the base word translation (a single
+  // network request). The expensive context/dictionary/synonym/phrase fan-out runs only when
+  // the caller explicitly asks for it (enrich === true) — i.e. when the user shows real intent
+  // by moving into the panel or pinning it. This is the main request-volume reduction.
+  if (options?.enrich !== true) {
     return baseTranslation;
   }
 
@@ -505,10 +496,20 @@ async function buildEnrichedTranslation(
     ),
     enrichTranslationDetails(dictionaryDetails, normalizedText, detectedSourceLanguage)
   ]);
-  const finalTranslatedText = contextTranslation.contextualGloss || baseResult.translatedText;
+  // The direct word translation is ALWAYS the primary result. The context-derived gloss
+  // is only surfaced as a secondary "in context" hint, and only when we are confident the
+  // sentinel markers survived translation cleanly — otherwise a mangled sentence slice
+  // would replace a perfectly good literal translation (the old wrong-translation bug).
+  const finalTranslatedText = baseResult.translatedText;
+  const contextGloss = buildContextGlossHint(
+    contextTranslation.contextualGloss,
+    contextTranslation.contextConfidence,
+    baseResult.translatedText
+  );
   const lexiconBoosted = Boolean(enrichedDetails?.__lexiconBoosted);
   const details = sanitizeTranslationDetails({
     ...enrichedDetails,
+    contextGloss,
     phraseMatches: contextTranslation.phraseMatches,
     grammarBreakdown: buildGrammarBreakdown(
       normalizedText,
@@ -521,7 +522,7 @@ async function buildEnrichedTranslation(
       detectedSourceLanguage,
       enrichedDetails,
       {
-        contextualGloss: contextTranslation.contextualGloss,
+        contextualGloss: contextGloss,
         baseTranslatedText: baseResult.translatedText
       }
     ),
@@ -544,34 +545,113 @@ async function buildEnrichedTranslation(
   };
 }
 
-function shouldDispatchEnrichedTranslation(baseTranslation, enrichedTranslation) {
-  if (!enrichedTranslation) {
-    return false;
+// Decide whether the context-derived gloss is trustworthy enough to show as a hint.
+// Only high-confidence glosses that actually differ from the direct translation qualify;
+// everything else is dropped so the hint never contradicts a correct literal translation.
+function buildContextGlossHint(gloss, confidence, baseTranslatedText) {
+  const normalizedGloss = safeText(gloss);
+  if (!normalizedGloss || confidence !== "high") {
+    return "";
   }
-
-  if (safeText(enrichedTranslation.translatedText) !== safeText(baseTranslation.translatedText)) {
-    return true;
+  if (normalizeKey(normalizedGloss) === normalizeKey(baseTranslatedText)) {
+    return "";
   }
+  return normalizedGloss;
+}
 
-  if (enrichedTranslation.provider !== baseTranslation.provider) {
-    return true;
+function translationMemoKey(text, sourceLang, targetLang) {
+  return `${sourceLang || "auto"}|${targetLang || "tr"}|${safeText(text).toLowerCase().slice(0, 400)}`;
+}
+
+async function ensureTranslationCacheLoaded() {
+  if (translationCacheLoaded) {
+    return;
   }
+  if (!translationCacheLoadPromise) {
+    translationCacheLoadPromise = (async () => {
+      try {
+        const stored = await extensionApi.storage.local.get(TRANSLATION_CACHE_STORAGE_KEY);
+        const entries = stored?.[TRANSLATION_CACHE_STORAGE_KEY];
+        const now = Date.now();
+        if (Array.isArray(entries)) {
+          for (const entry of entries) {
+            if (!entry?.k || !entry?.v || now - (entry.at || 0) > TRANSLATION_CACHE_TTL_MS) {
+              continue;
+            }
+            translationCache.set(entry.k, { value: entry.v, at: entry.at || now });
+          }
+        }
+      } catch (error) {
+        // A missing/corrupt cache is non-fatal — we just start empty.
+      } finally {
+        translationCacheLoaded = true;
+      }
+    })();
+  }
+  return translationCacheLoadPromise;
+}
 
-  const baseDetails = baseTranslation.details || {};
-  const enrichedDetails = enrichedTranslation.details || {};
-  const counts = [
-    ["dictionaryDefinitions", 0],
-    ["synonyms", 0],
-    ["examples", 0],
-    ["phraseMatches", 0],
-    ["wordForms", 0]
-  ];
+function getTranslationCacheEntry(key) {
+  const entry = translationCache.get(key);
+  if (!entry) {
+    return undefined;
+  }
+  if (Date.now() - entry.at > TRANSLATION_CACHE_TTL_MS) {
+    translationCache.delete(key);
+    return undefined;
+  }
+  // Refresh recency for LRU eviction.
+  translationCache.delete(key);
+  translationCache.set(key, entry);
+  return entry.value;
+}
 
-  return counts.some(([key, fallback]) => {
-    const baseCount = Array.isArray(baseDetails[key]) ? baseDetails[key].length : fallback;
-    const enrichedCount = Array.isArray(enrichedDetails[key]) ? enrichedDetails[key].length : fallback;
-    return enrichedCount > baseCount;
-  });
+function setTranslationCacheEntry(key, value) {
+  translationCache.set(key, { value, at: Date.now() });
+  while (translationCache.size > TRANSLATION_CACHE_MAX) {
+    const oldestKey = translationCache.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    translationCache.delete(oldestKey);
+  }
+  scheduleTranslationCachePersist();
+}
+
+function scheduleTranslationCachePersist() {
+  if (translationCachePersistTimer) {
+    return;
+  }
+  translationCachePersistTimer = setTimeout(() => {
+    translationCachePersistTimer = null;
+    void persistTranslationCache();
+  }, TRANSLATION_CACHE_PERSIST_DELAY_MS);
+}
+
+async function persistTranslationCache() {
+  try {
+    const entries = [];
+    for (const [k, entry] of translationCache.entries()) {
+      entries.push({ k, v: entry.value, at: entry.at });
+    }
+    await extensionApi.storage.local.set({ [TRANSLATION_CACHE_STORAGE_KEY]: entries });
+  } catch (error) {
+    // Storage quota/serialization failure — the cache keeps working in memory only.
+  }
+}
+
+// Cache-first wrapper around fetchGoogleTranslation. All translation traffic should go through
+// this so repeated words/sentences never hit the network twice within the TTL.
+async function fetchGoogleTranslationCached(text, sourceLang = "auto", targetLang = "tr", requestPolicy = {}) {
+  const key = translationMemoKey(text, sourceLang, targetLang);
+  await ensureTranslationCacheLoaded();
+  const cached = getTranslationCacheEntry(key);
+  if (cached) {
+    return cached;
+  }
+  const result = await fetchGoogleTranslation(text, sourceLang, targetLang, requestPolicy);
+  setTranslationCacheEntry(key, result);
+  return result;
 }
 
 async function fetchGoogleTranslation(text, sourceLang = "auto", targetLang = "tr", requestPolicy = {}) {
@@ -1001,18 +1081,19 @@ async function buildContextAwareTranslation(
   if (!shouldDisambiguate) {
     return {
       contextualGloss: "",
+      contextConfidence: "none",
       phraseMatches: []
     };
   }
 
   const markedContextPromise = markedContextText
-    ? fetchGoogleTranslation(markedContextText, sourceLang, targetLang, requestPolicy).catch(() => null)
+    ? fetchGoogleTranslationCached(markedContextText, sourceLang, targetLang, requestPolicy).catch(() => null)
     : Promise.resolve(null);
   const phraseMatchesPromise = phraseCandidates.length
     ? Promise.all(
         phraseCandidates.map(async (candidate) => {
           try {
-            const result = await fetchGoogleTranslation(candidate, sourceLang, targetLang, requestPolicy);
+            const result = await fetchGoogleTranslationCached(candidate, sourceLang, targetLang, requestPolicy);
             return {
               text: candidate,
               translatedText: result.translatedText,
@@ -1031,11 +1112,13 @@ async function buildContextAwareTranslation(
     phraseMatchesPromise
   ]);
 
+  const glossResult = extractContextualGloss(
+    markedContextResult?.translatedText || "",
+    rawPhraseMatches
+  );
   return {
-    contextualGloss: extractContextualGloss(
-      markedContextResult?.translatedText || "",
-      rawPhraseMatches
-    ),
+    contextualGloss: glossResult.gloss,
+    contextConfidence: glossResult.confidence,
     phraseMatches: rawPhraseMatches.filter(
       (entry) => entry?.text && entry?.translatedText && normalizeKey(entry.text) !== normalizeKey(sourceText)
     )
@@ -1091,6 +1174,7 @@ function emptyTranslationDetails() {
     headword: "",
     partOfSpeech: "",
     cefrLevel: "",
+    contextGloss: "",
     detailedMeanings: [],
     synonyms: [],
     wordForms: [],
@@ -1137,6 +1221,7 @@ function sanitizeTranslationDetails(details) {
     headword: safeText(details.headword),
     partOfSpeech: safeText(details.partOfSpeech),
     cefrLevel: safeText(details.cefrLevel),
+    contextGloss: safeText(details.contextGloss),
     detailedMeanings: Array.isArray(details.detailedMeanings)
       ? details.detailedMeanings
           .map((group) => ({
@@ -2137,10 +2222,16 @@ function sanitizePhraseCandidates(values) {
   return candidates;
 }
 
+// Returns { gloss, confidence } where confidence is:
+//   "high" — both [[*]] and [[/]] markers survived the translation cleanly, so the
+//            extracted slice is genuinely the hovered word's in-context meaning.
+//   "low"  — markers were mangled/reordered; the gloss is a best-guess fallback and
+//            must NOT be trusted enough to override the direct word translation.
+//   "none" — nothing usable.
 function extractContextualGloss(translatedText, phraseMatches = []) {
   const normalizedText = safeText(translatedText);
   if (!normalizedText) {
-    return "";
+    return { gloss: "", confidence: "none" };
   }
 
   // Try robust bracket extraction [[*]]word[[/]] with flexibility for spaces
@@ -2158,7 +2249,7 @@ function extractContextualGloss(translatedText, phraseMatches = []) {
     );
     const between = sanitizeGlossCandidate(betweenRaw);
     if (between) {
-      return between;
+      return { gloss: between, confidence: "high" };
     }
   }
 
@@ -2166,7 +2257,7 @@ function extractContextualGloss(translatedText, phraseMatches = []) {
   const legacyMarkerPattern = /(\bQXMARK9[78]\b|<m>|<\/m>)/i;
   const markerMatch = legacyMarkerPattern.exec(normalizedText) || startMatch || endMatch;
   if (!markerMatch) {
-    return "";
+    return { gloss: "", confidence: "none" };
   }
 
   const before = normalizedText.slice(0, markerMatch.index);
@@ -2199,7 +2290,7 @@ function extractContextualGloss(translatedText, phraseMatches = []) {
     }
   }
 
-  return bestCandidate;
+  return { gloss: bestCandidate, confidence: bestCandidate ? "low" : "none" };
 }
 
 function extractGlossCandidates(text, direction) {

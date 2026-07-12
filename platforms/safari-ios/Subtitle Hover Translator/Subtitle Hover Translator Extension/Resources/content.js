@@ -494,10 +494,8 @@ function handleMouseMove(event) {
     });
 
     try {
-      const translation = await requestTranslation(
-        hoveredWord.word,
-        buildHoverTranslationOptions(hoveredWord)
-      );
+      const hoverOptions = buildHoverTranslationOptions(hoveredWord);
+      const translation = await requestTranslation(hoveredWord.word, hoverOptions);
       clearTooltipPendingTimer();
       if (!isTooltipRequestCurrent(requestId)) {
         return;
@@ -513,17 +511,12 @@ function handleMouseMove(event) {
         details: translation.details,
         requestKey: translation.requestKey,
         context: hoveredWord.context,
+        enrichOptions: { ...hoverOptions, enrich: true },
         rect: hoveredWord.rect,
         point: {
           x: event.clientX,
           y: event.clientY
         }
-      });
-      void enrichHoverTranslation(hoveredWord, translation).then((enrichedTranslation) => {
-        if (!isTooltipRequestCurrent(requestId)) {
-          return;
-        }
-        applyTranslationUpdate(enrichedTranslation);
       });
     } catch (error) {
       clearTooltipPendingTimer();
@@ -589,7 +582,7 @@ function handleMouseUp(event) {
     });
 
     try {
-      const translation = await requestTranslation(selectionPayload.sourceText);
+      const translation = await requestTranslation(selectionPayload.sourceText, { enrich: true });
       clearTooltipPendingTimer();
       if (!isTooltipRequestCurrent(requestId)) {
         return;
@@ -654,7 +647,7 @@ function handleSelectionChange() {
     });
 
     try {
-      const translation = await requestTranslation(selectionPayload.sourceText);
+      const translation = await requestTranslation(selectionPayload.sourceText, { enrich: true });
       clearTooltipPendingTimer();
       if (!isTooltipRequestCurrent(requestId)) {
         return;
@@ -934,7 +927,7 @@ function handleTouchEnd(event) {
       });
 
       try {
-        const translation = await requestTranslation(selectionPayload.sourceText);
+        const translation = await requestTranslation(selectionPayload.sourceText, { enrich: true });
         clearTooltipPendingTimer();
         if (!isTooltipRequestCurrent(requestId)) {
           return;
@@ -976,7 +969,7 @@ function handleTouchEnd(event) {
     try {
       const translation = await requestTranslation(
         snapshot.startWord.word,
-        buildHoverTranslationOptions(snapshot.startWord)
+        { ...buildHoverTranslationOptions(snapshot.startWord), enrich: true }
       );
       clearTooltipPendingTimer();
       if (!isTooltipRequestCurrent(requestId)) {
@@ -995,12 +988,6 @@ function handleTouchEnd(event) {
         context: snapshot.startWord.context,
         rect: snapshot.startWord.rect,
         point: touchPoint
-      });
-      void enrichHoverTranslation(snapshot.startWord, translation).then((enrichedTranslation) => {
-        if (!isTooltipRequestCurrent(requestId)) {
-          return;
-        }
-        applyTranslationUpdate(enrichedTranslation);
       });
     } catch (error) {
       clearTooltipPendingTimer();
@@ -3030,6 +3017,7 @@ function cloneTranslationDetails(details) {
   return {
     headword: String(details?.headword || ""),
     partOfSpeech: String(details?.partOfSpeech || ""),
+    contextGloss: String(details?.contextGloss || ""),
     detailedMeanings: Array.isArray(details?.detailedMeanings)
       ? details.detailedMeanings.map((group) => ({
           partOfSpeech: String(group?.partOfSpeech || ""),
@@ -3099,61 +3087,6 @@ function invalidateTooltipRequests() {
 
 function isTooltipRequestCurrent(requestId) {
   return requestId === state.activeTooltipRequestId;
-}
-
-async function enrichHoverTranslation(hoveredWord, translation) {
-  const details = cloneTranslationDetails(translation.details);
-
-  if (
-    !(details.phraseMatches || []).length &&
-    countWords(translation.sourceText) === 1 &&
-    String(translation.detectedSourceLanguage || "").toLowerCase().startsWith("en")
-  ) {
-    const phraseMatch = await detectPhraseMatch(hoveredWord, translation);
-    if (phraseMatch) {
-      details.phraseMatches = [phraseMatch];
-    }
-  }
-
-  return {
-    ...translation,
-    details
-  };
-}
-
-async function detectPhraseMatch(hoveredWord, baseTranslation) {
-  if (!Number.isInteger(hoveredWord?.index)) {
-    return null;
-  }
-
-  const entries = hoveredWord.virtualEntries
-    || (hoveredWord.container ? getRenderedWordEntries(hoveredWord.container) : []);
-  if (entries.length < 2) {
-    return null;
-  }
-
-  const candidates = buildPhraseCandidates(entries, hoveredWord.index);
-  for (const candidate of candidates.slice(0, 2)) {
-    if (!candidate.text || normalizeWhitespace(candidate.text) === hoveredWord.word) {
-      continue;
-    }
-
-    const phraseTranslation = await requestTranslation(candidate.text);
-    if (!phraseTranslation?.translatedText) {
-      continue;
-    }
-
-    return {
-      text: candidate.text,
-      translatedText: phraseTranslation.translatedText,
-      partOfSpeech: phraseTranslation.details?.partOfSpeech || "",
-      examples: Array.isArray(phraseTranslation.details?.examples)
-        ? phraseTranslation.details.examples.slice(0, 2)
-        : []
-    };
-  }
-
-  return null;
 }
 
 function buildPhraseCandidates(entries, hoveredIndex) {
@@ -3321,6 +3254,12 @@ function buildTranslationCacheKey(text, options = {}) {
     parts.push(mode);
   }
 
+  // Enriched results are a superset of base results, so they must be cached under a distinct
+  // key — otherwise a base (word-only) hit would satisfy a later enrichment request.
+  if (options?.enrich === true) {
+    parts.push("enrich");
+  }
+
   const markedContextText = normalizeCacheSegment(options?.markedContextText);
   const contextText = normalizeCacheSegment(options?.contextText);
   if (markedContextText) {
@@ -3363,6 +3302,7 @@ async function requestTranslation(text, options = {}) {
     sourceLang: state.settings.sourceLang,
     targetLang: state.settings.targetLang,
     mode: options.mode,
+    enrich: options.enrich === true,
     contextText: options.contextText,
     markedContextText: options.markedContextText,
     phraseCandidates: options.phraseCandidates,
@@ -3573,6 +3513,48 @@ function showTooltip(payload) {
   positionTooltip(payload.rect, payload.point);
 }
 
+// Lazily fetch the expensive enrichment (context gloss, dictionary, synonyms, phrases) for
+// the word currently shown in the tooltip. Runs at most once per shown word, and only when
+// the user signals intent (moving into the panel or pinning it) — keeping idle hovers to a
+// single network request.
+function ensureEnrichmentForCurrentTooltip() {
+  const payload = state.currentPayload;
+  if (!payload || !payload.enrichOptions || payload.enriched || payload.enriching) {
+    return;
+  }
+
+  payload.enriching = true;
+  const requestKey = payload.requestKey || "";
+  const sourceText = payload.sourceText;
+
+  if (state.tooltip) {
+    state.tooltip.dataset.loading = "true";
+  }
+  setTooltipStatus("Detaylar yükleniyor…", "info");
+
+  requestTranslation(sourceText, payload.enrichOptions)
+    .then((enriched) => {
+      if (!enriched || state.currentPayload !== payload) {
+        payload.enriching = false;
+        if (state.tooltip) {
+          state.tooltip.dataset.loading = "false";
+        }
+        setTooltipStatus("", "idle");
+        return;
+      }
+      payload.enriched = true;
+      // applyTranslationUpdate clears the loading flag and status once details render.
+      applyTranslationUpdate(enriched, requestKey);
+    })
+    .catch(() => {
+      payload.enriching = false;
+      if (state.tooltip) {
+        state.tooltip.dataset.loading = "false";
+      }
+      setTooltipStatus("Ek detaylar alınamadı.", "error", 2600);
+    });
+}
+
 function applyTranslationUpdate(translation, requestKeyOverride = "") {
   if (!translation) {
     return;
@@ -3661,12 +3643,15 @@ function ensureTooltip() {
   tooltip.hidden = true;
   tooltip.dataset.visible = "false";
   tooltip.dataset.loading = "false";
+  tooltip.setAttribute("role", "dialog");
+  tooltip.setAttribute("aria-label", "Çeviri paneli");
   tooltip.dataset.theme = normalizeUiTheme(state.settings?.uiTheme);
   tooltip.innerHTML = `
     <div class="sht-card">
       <span class="sht-badge" data-role="badge">Kelime</span>
       <p class="sht-source" data-role="source"></p>
-      <p class="sht-target" data-role="target"></p>
+      <p class="sht-target" data-role="target" aria-live="polite"></p>
+      <p class="sht-context-gloss" data-role="context-gloss" hidden></p>
       <p class="sht-meta" data-role="meta" hidden></p>
       <section class="sht-section" data-role="phrases-section" hidden>
         <p class="sht-section-title">Phrase / idiom</p>
@@ -3717,6 +3702,9 @@ function ensureTooltip() {
     state.tooltipPointerInside = true;
     pinTooltip();
     clearTimeout(state.hideTimer);
+    // Entering the panel is a strong signal the user wants to read details, so this is
+    // where the lazy context/dictionary/synonym enrichment is fetched (once).
+    ensureEnrichmentForCurrentTooltip();
   });
 
   tooltip.addEventListener("mouseleave", () => {
@@ -3768,7 +3756,8 @@ function ensureTooltip() {
     hideTooltip(true);
   });
 
-  document.documentElement.appendChild(tooltip);
+  const initialParent = getActiveFullscreenElement() || document.documentElement;
+  initialParent.appendChild(tooltip);
   state.tooltip = tooltip;
   applyTooltipTheme();
   return tooltip;
@@ -3782,6 +3771,7 @@ function resolveTooltipSurface(rect) {
 
 function renderTooltipDetails(tooltip, details, sourceText, contextText = "") {
   const metaElement = tooltip.querySelector("[data-role='meta']");
+  const contextGlossElement = tooltip.querySelector("[data-role='context-gloss']");
   const phrasesSection = tooltip.querySelector("[data-role='phrases-section']");
   const phrasesElement = tooltip.querySelector("[data-role='phrases']");
   const meaningsSection = tooltip.querySelector("[data-role='meanings-section']");
@@ -3798,6 +3788,18 @@ function renderTooltipDetails(tooltip, details, sourceText, contextText = "") {
   const insightsSection = tooltip.querySelector("[data-role='insights-section']");
   const insightsElement = tooltip.querySelector("[data-role='insights']");
   const safeDetails = details || {};
+
+  if (contextGlossElement) {
+    const glossText = String(safeDetails.contextGloss || "").trim();
+    if (glossText) {
+      contextGlossElement.textContent = `Bağlamda: ${glossText}`;
+      contextGlossElement.hidden = false;
+    } else {
+      contextGlossElement.textContent = "";
+      contextGlossElement.hidden = true;
+    }
+  }
+
   const metaParts = [];
 
   if (safeDetails.headword && safeDetails.headword !== sourceText) {
@@ -4186,44 +4188,57 @@ function getViewportMetrics() {
   const visual = window.visualViewport;
   const width = visual?.width ?? window.innerWidth;
   const height = visual?.height ?? window.innerHeight;
-  const baseOffsetLeft = visual?.offsetLeft ?? 0;
-  const baseOffsetTop = visual?.offsetTop ?? 0;
-  const rootOffset = getRootViewportOffset();
-  const offsetLeft = Math.max(0, baseOffsetLeft + rootOffset.x);
-  const offsetTop = Math.max(0, baseOffsetTop + rootOffset.y);
 
+  // A position:fixed element is laid out against the LAYOUT viewport, whereas
+  // visualViewport.offset* describes the VISUAL viewport (pinch-zoom / on-screen keyboard).
+  // Adding those offsets to fixed coordinates double-counted and caused the panel to drift
+  // ("kayma"), especially on Chrome. Any real containing-block shift (a transformed ancestor)
+  // is corrected precisely in applyFixedTooltipPosition() after layout, so offsets stay 0.
   return {
     width,
     height,
-    offsetLeft,
-    offsetTop
+    offsetLeft: 0,
+    offsetTop: 0
   };
 }
 
-function getRootViewportOffset() {
-  const rects = [];
-  if (document.documentElement) {
-    rects.push(document.documentElement.getBoundingClientRect());
-  }
-  if (document.body) {
-    rects.push(document.body.getBoundingClientRect());
-  }
+// Set a fixed-positioned tooltip to the given VIEWPORT coordinates, then correct for any
+// transformed/filtered ancestor that has silently become the fixed element's containing block
+// (common on YouTube/Netflix players). We ask for (left, top), measure where it actually
+// landed, and subtract the delta — so the panel ends up exactly at the intended viewport spot.
+function getActiveFullscreenElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
 
-  let offsetX = 0;
-  let offsetY = 0;
-  for (const rect of rects) {
-    if (!rect) {
-      continue;
-    }
-    if (rect.left < 0) {
-      offsetX = Math.max(offsetX, -rect.left);
-    }
-    if (rect.top < 0) {
-      offsetY = Math.max(offsetY, -rect.top);
-    }
+// When a site enters fullscreen, Chrome promotes the fullscreen element to the top layer and a
+// panel parented on <html> renders BEHIND it. Re-parent the tooltip into the fullscreen subtree
+// so it stays visible, and move it back to <html> on exit. Position is recomputed afterwards so
+// the containing-block correction adapts to the new parent.
+function reparentTooltipForFullscreen() {
+  const tooltip = state.tooltip;
+  if (!tooltip) {
+    return;
   }
+  const desiredParent = getActiveFullscreenElement() || document.documentElement;
+  if (desiredParent && tooltip.parentNode !== desiredParent) {
+    desiredParent.appendChild(tooltip);
+  }
+  if (state.currentPayload?.rect && tooltip.dataset.visible === "true") {
+    positionTooltip(state.currentPayload.rect, state.currentPayload.point);
+  }
+}
 
-  return { x: offsetX, y: offsetY };
+function applyFixedTooltipPosition(tooltip, left, top) {
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+
+  const rect = tooltip.getBoundingClientRect();
+  const deltaX = rect.left - left;
+  const deltaY = rect.top - top;
+  if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5) {
+    tooltip.style.left = `${left - deltaX}px`;
+    tooltip.style.top = `${top - deltaY}px`;
+  }
 }
 
 function positionTooltip(rect, point) {
@@ -4237,8 +4252,7 @@ function positionTooltip(rect, point) {
     const dockedPlacement = resolveDockedTooltipPlacement(tooltip);
     tooltip.style.width = `${dockedPlacement.width}px`;
     tooltip.style.maxHeight = `${dockedPlacement.maxHeight}px`;
-    tooltip.style.left = `${dockedPlacement.left}px`;
-    tooltip.style.top = `${dockedPlacement.top}px`;
+    applyFixedTooltipPosition(tooltip, dockedPlacement.left, dockedPlacement.top);
     return;
   }
 
@@ -4324,8 +4338,7 @@ function positionTooltip(rect, point) {
     );
   }
 
-  tooltip.style.left = `${placement.left}px`;
-  tooltip.style.top = `${placement.top}px`;
+  applyFixedTooltipPosition(tooltip, placement.left, placement.top);
 }
 
 function resolveDockedTooltipPlacement(tooltip) {
@@ -4522,6 +4535,7 @@ function toggleTooltipPinned() {
 
   if (state.tooltipManualPinned) {
     pinTooltip(60_000);
+    ensureEnrichmentForCurrentTooltip();
     return;
   }
 
@@ -4777,7 +4791,14 @@ function observeDynamicPageChanges() {
   window.addEventListener("popstate", triggerRefresh, true);
   window.addEventListener("hashchange", triggerRefresh, true);
   window.addEventListener("pageshow", triggerRefresh, true);
-  document.addEventListener("fullscreenchange", triggerRefresh, true);
+  document.addEventListener("fullscreenchange", () => {
+    reparentTooltipForFullscreen();
+    triggerRefresh();
+  }, true);
+  document.addEventListener("webkitfullscreenchange", () => {
+    reparentTooltipForFullscreen();
+    triggerRefresh();
+  }, true);
 
   const root = document.documentElement || document.body;
   if (!root) {
